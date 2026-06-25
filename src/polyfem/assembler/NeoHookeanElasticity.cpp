@@ -24,6 +24,19 @@ namespace polyfem::assembler
 		assert(size() == 2 || size() == 3);
 
 		params_.add_multimaterial(index, params, size() == 3, units.stress(), root_path);
+
+		// SB
+		for (int i = F0_inv_.size(); i <= index; i++) // identity by default for all
+		{
+			F0_inv_.push_back(Eigen::MatrixXd::Identity(size(), size()));
+		}
+
+		if (params.contains("alpha"))
+		{
+			double alpha = params["alpha"].get<double>();
+			F0_inv_[index] = (1.0 / alpha) * Eigen::MatrixXd::Identity(size(), size());
+		}
+		// SB
 	}
 
 	Eigen::Matrix<double, Eigen::Dynamic, 1, 0, 3, 1>
@@ -133,7 +146,7 @@ namespace polyfem::assembler
 			params_.lambda_mu(local_pts.row(p), vals.val.row(p), t, vals.element_id, lambda, mu);
 
 			compute_diplacement_grad(size(), vals, local_pts, p, displacement, displacement_grad);
-			const Eigen::MatrixXd def_grad = Eigen::MatrixXd::Identity(size(), size()) + displacement_grad;
+			const Eigen::MatrixXd def_grad = (Eigen::MatrixXd::Identity(size(), size()) + displacement_grad) * F0_inv_[vals.element_id]; // SB
 			const Eigen::MatrixXd FmT = def_grad.inverse().transpose();
 			const Eigen::VectorXd FmT_vec = utils::flatten(FmT);
 			const double J = def_grad.determinant();
@@ -278,7 +291,7 @@ namespace polyfem::assembler
 		{
 			compute_diplacement_grad(size(), bs, vals, local_pts, p, displacement, displacement_grad);
 
-			const Eigen::MatrixXd def_grad = I + displacement_grad;
+			const Eigen::MatrixXd def_grad = (I + displacement_grad) * F0_inv_[data.el_id];
 			if (type == ElasticityTensorType::F)
 			{
 				all.row(p) = fun(def_grad);
@@ -376,6 +389,9 @@ namespace polyfem::assembler
 				// Id + grad d
 				def_grad = (local_disp.transpose() * grad) * jac_it + Eigen::Matrix<T, dim, dim>::Identity(size(), size());
 
+				// SB - apply reference config
+				def_grad = def_grad * F0_inv_[data.vals.element_id];
+
 				double lambda, mu;
 				params_.lambda_mu(data.vals.quadrature.points.row(p), data.vals.val.row(p), data.t, data.vals.element_id, lambda, mu);
 
@@ -406,6 +422,8 @@ namespace polyfem::assembler
 				// Id + grad d
 				for (int d = 0; d < dim; ++d)
 					def_grad(d, d) += T(1);
+
+				def_grad = def_grad * F0_inv_[data.vals.element_id]; // SB
 
 				double lambda, mu;
 				params_.lambda_mu(data.vals.quadrature.points.row(p), data.vals.val.row(p), data.t, data.vals.element_id, lambda, mu);
@@ -494,6 +512,7 @@ namespace polyfem::assembler
 
 			// Id + grad d
 			def_grad = local_disp.transpose() * delF_delU + Eigen::Matrix<double, dim, dim>::Identity(size(), size());
+			def_grad = def_grad * F0_inv_[data.vals.element_id]; // SB
 
 			const double J = use_robust_jacobian ? jacs(p) * jac_it.determinant() : def_grad.determinant();
 			const double log_det_j = log(J);
@@ -583,6 +602,7 @@ namespace polyfem::assembler
 
 			// Id + grad d
 			def_grad = local_disp.transpose() * delF_delU + Eigen::Matrix<double, dim, dim>::Identity(size(), size());
+			def_grad = def_grad * F0_inv_[data.vals.element_id]; // SB
 
 			const double J = use_robust_jacobian ? jacs(p) * jac_it.determinant() : def_grad.determinant();
 			double log_det_j = log(J);
@@ -673,6 +693,7 @@ namespace polyfem::assembler
 		params_.lambda_mu(local_pts, global_pts, t, el_id, lambda, mu);
 
 		Eigen::MatrixXd def_grad = Eigen::MatrixXd::Identity(grad_u_i.rows(), grad_u_i.cols()) + grad_u_i;
+		def_grad = def_grad * F0_inv_[data.el_id]; // SB
 		Eigen::MatrixXd FmT = def_grad.inverse().transpose();
 
 		stress = mu * (def_grad - FmT) + lambda * std::log(def_grad.determinant()) * FmT;
@@ -694,6 +715,7 @@ namespace polyfem::assembler
 		params_.lambda_mu(local_pts, global_pts, t, el_id, lambda, mu);
 
 		Eigen::MatrixXd def_grad = Eigen::MatrixXd::Identity(grad_u_i.rows(), grad_u_i.cols()) + grad_u_i;
+		def_grad = def_grad * F0_inv_[data.el_id]; // SB
 		Eigen::MatrixXd FmT = def_grad.inverse().transpose();
 
 		stress = mu * (def_grad - FmT) + lambda * std::log(def_grad.determinant()) * FmT;
@@ -716,6 +738,7 @@ namespace polyfem::assembler
 		params_.lambda_mu(local_pts, global_pts, t, el_id, lambda, mu);
 
 		Eigen::MatrixXd def_grad = Eigen::MatrixXd::Identity(grad_u_i.rows(), grad_u_i.cols()) + grad_u_i;
+		def_grad = def_grad * F0_inv_[data.el_id]; // SB
 		Eigen::MatrixXd FmT = def_grad.inverse().transpose();
 
 		stress = mu * (def_grad - FmT) + lambda * std::log(def_grad.determinant()) * FmT;
@@ -756,6 +779,7 @@ namespace polyfem::assembler
 		const Eigen::MatrixXd &grad_u_i = data.grad_u_i;
 
 		Eigen::MatrixXd def_grad = Eigen::MatrixXd::Identity(grad_u_i.rows(), grad_u_i.cols()) + grad_u_i;
+		def_grad = def_grad * F0_inv_[data.el_id]; // SB
 		Eigen::MatrixXd FmT = def_grad.inverse().transpose();
 		dstress_dmu = def_grad - FmT;
 		dstress_dlambda = std::log(def_grad.determinant()) * FmT;

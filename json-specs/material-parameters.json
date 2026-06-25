@@ -59,7 +59,8 @@
             "id",
             "rho",
             "phi",
-            "psi"
+            "psi",
+            "alpha"
         ],
         "doc": "Material Parameters including ID, Young's modulus ($E$), Poisson's ratio ($\\nu$), density ($\\rho$)"
     },
@@ -76,7 +77,8 @@
             "id",
             "rho",
             "phi",
-            "psi"
+            "psi",
+            "alpha"
         ],
         "doc": "Material Parameters including ID, Lamé first ($\\lambda$), Lamé second ($\\mu$), density ($\\rho$)"
     },
@@ -597,6 +599,13 @@
         "type": "include",
         "spec_file": "value-no.json",
         "doc": "permittivity"
+    },
+    {
+        "pointer": "/alpha",
+        "type": "include",
+        "spec_file": "value1.json",
+        "doc": "Reference configuration pre-strain. F0 = alpha * I. Default 1 means no pre-strain.",
+        "default": 1
     },
     {
         "pointer": "/phi",

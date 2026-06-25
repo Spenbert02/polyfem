@@ -73,6 +73,7 @@ namespace polyfem::assembler
 
 	private:
 		LameParameters params_;
+		std::vector<Eigen::MatrixXd> F0_inv_; // SB
 
 		// utility function that computes energy, the template is used for double, DScalar1, and DScalar2 in energy, gradient and hessian
 		template <typename T, int n_basis, int dim>
