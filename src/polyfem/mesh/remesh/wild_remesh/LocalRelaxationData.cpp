@@ -239,7 +239,7 @@ namespace polyfem::mesh
 
 			const int size = state.problem->is_scalar() ? 1 : dim();
 			solve_data.rhs_assembler = std::make_shared<assembler::RhsAssembler>(
-				*assembler, *mesh, Obstacle(), dirichlet_nodes, neumann_nodes,
+				*assembler, *mesh, nullptr, dirichlet_nodes, neumann_nodes,
 				dirichlet_nodes_position, neumann_nodes_position, n_bases(),
 				dim(), bases, /*geom_bases=*/bases, mass_assembly_vals_cache,
 				*state.problem, state.args["space"]["advanced"]["bc_method"],
