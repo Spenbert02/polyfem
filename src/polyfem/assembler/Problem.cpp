@@ -125,6 +125,33 @@ namespace polyfem
 			}
 		}
 
+		void Problem::setup_boundary_measure_bc(
+			const mesh::Mesh &mesh,
+			const int fe_space_id,
+			const std::vector<LocalBoundary> &local_boundary,
+			std::unordered_map<int, std::vector<LocalBoundary>> &local_boundary_measure)
+		{
+			(void)fe_space_id;
+
+			local_boundary_measure.clear();
+
+			for (const LocalBoundary &lb : local_boundary)
+			{
+				for (int i = 0; i < lb.size(); i++)
+				{
+					const int primitive_g_id = lb.global_primitive_id(i);
+					const int tag = mesh.get_boundary_id(primitive_g_id);
+
+					if (std::find(boundary_measure_ids_.begin(), boundary_measure_ids_.end(), tag) == boundary_measure_ids_.end())
+						continue;
+
+					LocalBoundary boundary_lb(lb.element_id(), lb.type());
+					boundary_lb.add_boundary_primitive(primitive_g_id, lb[i]);
+					local_boundary_measure[tag].emplace_back(boundary_lb);
+				}
+			}
+		}
+
 		void Problem::setup_nodal_bc(
 			const Mesh &mesh,
 			const BoundaryKind kind,
@@ -162,6 +189,7 @@ namespace polyfem
 			std::vector<LocalBoundary> &local_neumann_boundary,
 			std::vector<LocalBoundary> &local_pressure_boundary,
 			std::unordered_map<int, std::vector<LocalBoundary>> &local_pressure_cavity,
+			std::unordered_map<int, std::vector<LocalBoundary>> &local_boundary_measure,
 			std::vector<int> &pressure_boundary_nodes,
 			std::vector<int> &dirichlet_nodes,
 			std::vector<int> &neumann_nodes)
@@ -171,6 +199,7 @@ namespace polyfem
 			local_neumann_boundary.clear();
 			local_pressure_boundary.clear();
 			local_pressure_cavity.clear();
+			local_boundary_measure.clear();
 
 			for (auto it = local_boundary.begin(); it != local_boundary.end(); ++it)
 			{
@@ -182,6 +211,7 @@ namespace polyfem
 				for (int i = 0; i < lb.size(); ++i)
 				{
 					LocalBoundary new_pressure_cavity_lb(lb.element_id(), lb.type());
+					LocalBoundary new_boundary_measure_lb(lb.element_id(), lb.type());
 
 					const int primitive_g_id = lb.global_primitive_id(i);
 					const int tag = mesh.get_boundary_id(primitive_g_id);
@@ -199,6 +229,8 @@ namespace polyfem
 						new_pressure_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
 					if (std::find(pressure_cavity_ids_.begin(), pressure_cavity_ids_.end(), tag) != pressure_cavity_ids_.end())
 						new_pressure_cavity_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
+					if (std::find(boundary_measure_ids_.begin(), boundary_measure_ids_.end(), tag) != boundary_measure_ids_.end())
+						new_boundary_measure_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
 					if (std::find(splitting_pressure_boundary_ids_.begin(), splitting_pressure_boundary_ids_.end(), tag) != splitting_pressure_boundary_ids_.end())
 						new_pressure_dirichlet_lb.add_boundary_primitive(lb.global_primitive_id(i), lb[i]);
 
@@ -207,6 +239,13 @@ namespace polyfem
 						if (local_pressure_cavity.find(tag) == local_pressure_cavity.end())
 							local_pressure_cavity[tag] = std::vector<LocalBoundary>();
 						local_pressure_cavity[tag].emplace_back(new_pressure_cavity_lb);
+					}
+
+					if (!new_boundary_measure_lb.empty())
+					{
+						if (local_boundary_measure.find(tag) == local_boundary_measure.end())
+							local_boundary_measure[tag] = std::vector<LocalBoundary>();
+						local_boundary_measure[tag].emplace_back(new_boundary_measure_lb);
 					}
 				}
 

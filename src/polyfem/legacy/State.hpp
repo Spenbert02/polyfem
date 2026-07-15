@@ -527,7 +527,8 @@ namespace polyfem::legacy
 			Eigen::MatrixXd &sol, Eigen::MatrixXd &pressure, UserPostStepCallback user_post_step = {});
 
 		/// @brief Returns whether the system is linear. Collisions and pressure add nonlinearity to the problem.
-		bool is_problem_linear() const { return assembler->is_linear() && !is_contact_enabled() && !is_pressure_enabled() && !has_constraints(); }
+		bool is_problem_linear() const { return assembler->is_linear() && !is_contact_enabled() && !is_pressure_enabled()
+												&& !has_constraints() && !is_boundary_measure_enabled(); }
 
 		bool has_constraints() const
 		{
@@ -565,6 +566,8 @@ namespace polyfem::legacy
 		std::vector<mesh::LocalBoundary> local_pressure_boundary;
 		/// mapping from elements to nodes for pressure boundary conditions
 		std::unordered_map<int, std::vector<mesh::LocalBoundary>> local_pressure_cavity;
+		/// mapping for something
+		std::unordered_map<int, std::vector<mesh::LocalBoundary>> local_boundary_measure;
 		/// nodes on the boundary of polygonal elements, used for harmonic bases
 		std::map<int, basis::InterfaceData> poly_edge_to_data;
 		/// per node dirichlet
@@ -725,6 +728,13 @@ namespace polyfem::legacy
 		{
 			return (args["boundary_conditions"]["pressure_boundary"].size() > 0)
 				   || (args["boundary_conditions"]["pressure_cavity"].size() > 0);
+		}
+
+		/// @brief does the simulation have boundary measure BC
+		/// @return true/false
+		bool is_boundary_measure_enabled() const
+		{
+			return args["boundary_conditions"]["boundary_measure"].size() > 0;
 		}
 
 		/// stores if input json contains dhat

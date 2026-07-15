@@ -83,6 +83,8 @@ namespace polyfem::mesh
 		// per node pressure
 		std::unordered_map<int, std::vector<LocalBoundary>> local_pressure_cavity;
 		std::vector<int> pressure_boundary_nodes;
+		// boundary measure
+		std::unordered_map<int, std::vector<LocalBoundary>> local_boundary_measure;
 
 		Eigen::MatrixXd rhs;
 

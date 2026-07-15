@@ -3,6 +3,7 @@
 #include <polyfem/io/OBJWriter.hpp>
 #include <polyfem/utils/MatrixUtils.hpp>
 #include <polyfem/utils/MatrixUtils.hpp>
+#include <polyfem/solver/forms/lagrangian/BoundaryMeasureLagrangianForm.hpp>
 
 #include <polyfem/utils/Logger.hpp>
 
@@ -262,6 +263,47 @@ namespace polyfem::solver
 			solver_->factorize(Q2tQ2);
 			timer.stop();
 			logger().debug("Factorization and computation of Q2tQ2 took: {}", timer.getElapsedTime());
+
+			std::vector<std::shared_ptr<Form>> tmp;
+			tmp.insert(tmp.end(), penalty_forms_.begin(), penalty_forms_.end());
+			penalty_problem_ = std::make_shared<FullNLProblem>(tmp);
+
+			update_constraint_values();
+
+			return;
+		}
+
+		bool only_boundary_measure = !penalty_forms_.empty();
+		for (const auto &f : penalty_forms_)
+		{
+			if (!std::dynamic_pointer_cast<BoundaryMeasureLagrangianForm>(f))
+			{
+				only_boundary_measure = false;
+				break;
+			}
+		}
+
+		if (only_boundary_measure)
+		{
+			// Every penalty form is a BoundaryMeasureLagrangianForm, which expresses
+			// a purely nonlinear constraint enforced only through an augmented-
+			// Lagrangian penalty energy (never via A_/b_). There is nothing linear
+			// to eliminate via QR, and factorizing a 0-row constraint matrix
+			// crashes CHOLMOD/SPQR. Skip the QR path entirely and go straight to a
+			// full-space AL solve — ALSolver::solve_al() already does this
+			// automatically once reduced_size_ == full_size_. penalty_problem_
+			// still needs to be built so the AL penalty energy is not dropped.
+			logger().debug("All penalty forms are boundary-measure constraints; skipping QR factorization");
+
+			reduced_size_ = full_size_;
+			num_penalty_constraints_ = 0;
+
+			Q1_.resize(full_size_, 0);
+			Q2_ = StiffnessMatrix(full_size_, full_size_);
+			Q2_.setIdentity();
+			Q2t_ = Q2_.transpose();
+			R1_.resize(0, 0);
+			P_.setIdentity(0);
 
 			std::vector<std::shared_ptr<Form>> tmp;
 			tmp.insert(tmp.end(), penalty_forms_.begin(), penalty_forms_.end());
@@ -585,7 +627,19 @@ namespace polyfem::solver
 		// TODO: removed fearure const bool only_elastic
 		double res = FullNLProblem::value(reduced_to_full(x));
 
-		if (penalty_problem_ && full_size() == current_size())
+		if (full_size() != current_size())
+		{
+			// BoundaryMeasureLagrangianForm's constraint is nonlinear and can't be
+			// eliminated via the linear null-space projection the way Dirichlet BCs
+			// can, so it must still contribute here even when real dimensionality
+			// reduction is active from other (linear) penalty forms.
+			for (const auto &f : penalty_forms_)
+			{
+				if (auto bm = std::dynamic_pointer_cast<BoundaryMeasureLagrangianForm>(f))
+					res += bm->value(reduced_to_full(x));
+			}
+		}
+		else if (penalty_problem_)
 		{
 			res += penalty_problem_->value(x);
 		}
@@ -599,6 +653,16 @@ namespace polyfem::solver
 
 		if (full_size() != current_size())
 		{
+			for (const auto &f : penalty_forms_)
+			{
+				if (auto bm = std::dynamic_pointer_cast<BoundaryMeasureLagrangianForm>(f))
+				{
+					TVector tmp;
+					bm->first_derivative(reduced_to_full(x), tmp);
+					grad += tmp;
+				}
+			}
+
 			if (penalty_forms_.size() == 1 && penalty_forms_.front()->can_project())
 				penalty_forms_.front()->project_gradient(grad);
 			else
@@ -618,6 +682,16 @@ namespace polyfem::solver
 
 		if (full_size() != current_size())
 		{
+			for (const auto &f : penalty_forms_)
+			{
+				if (auto bm = std::dynamic_pointer_cast<BoundaryMeasureLagrangianForm>(f))
+				{
+					THessian tmp;
+					bm->second_derivative(reduced_to_full(x), tmp);
+					hessian += tmp;
+				}
+			}
+
 			full_hessian_to_reduced_hessian(hessian);
 		}
 		else if (penalty_problem_)

@@ -3,6 +3,7 @@
 #include <polyfem/solver/NLProblem.hpp>
 #include <polyfem/solver/forms/Form.hpp>
 #include <polyfem/solver/forms/lagrangian/BCLagrangianForm.hpp>
+#include <polyfem/solver/forms/lagrangian/BoundaryMeasureLagrangianForm.hpp>
 #include <polyfem/solver/forms/lagrangian/MatrixLagrangianForm.hpp>
 #include <polyfem/solver/forms/lagrangian/PeriodicLagrangianForm.hpp>
 #include <polyfem/solver/forms/lagrangian/MacroStrainLagrangianForm.hpp>
@@ -64,6 +65,9 @@ namespace polyfem::solver
 		const std::vector<mesh::LocalBoundary> &local_pressure_boundary,
 		const std::unordered_map<int, std::vector<mesh::LocalBoundary>> &local_pressure_cavity,
 		const std::shared_ptr<assembler::PressureAssembler> pressure_assembler,
+
+		// Boundary measure form
+		const std::unordered_map<int, std::vector<mesh::LocalBoundary>> &local_boundary_measure,
 
 		// Inertia form
 		const bool ignore_inertia,
@@ -208,6 +212,15 @@ namespace polyfem::solver
 					ndof, boundary_nodes, local_boundary, local_neumann_boundary,
 					n_boundary_samples, mass_tmp, *rhs_assembler, obstacle_ndof, is_time_dependent, t));
 			// forms.push_back(al_form.back());
+		}
+
+		if (rhs_assembler != nullptr)
+		{
+			for (const auto &[id, lb] : local_boundary_measure)
+			{
+				al_form.push_back(std::make_shared<BoundaryMeasureLagrangianForm>(
+					ndof, rhs_assembler->mesh(), lb, bases, geom_bases, rhs_assembler->problem(), id));
+			}
 		}
 
 		if (periodic_bc != nullptr)

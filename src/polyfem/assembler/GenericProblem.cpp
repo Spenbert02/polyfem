@@ -109,6 +109,9 @@ namespace polyfem
 				for (auto &v : cavity_pressures_)
 					v.second.set_unit_type(units.pressure());
 
+				for (auto &v : boundary_measures_)
+					v.second.set_unit_type(assembler.size() == 2 ? units.length() : fmt::format("{}^2", units.length()));
+
 				for (auto &v : initial_position_)
 					for (int i = 0; i < 3; ++i)
 						v.second[i].set_unit_type(units.velocity());
@@ -151,6 +154,9 @@ namespace polyfem
 
 				for (auto &v : cavity_pressures_)
 					v.second.set_unit_type(units.pressure());
+
+				for (auto &v : boundary_measures_)
+					v.second.set_unit_type(assembler.size() == 2 ? units.length() : fmt::format("{}^2", units.length()));
 
 				for (auto &v : initial_position_)
 					for (int i = 0; i < 3; ++i)
@@ -309,6 +315,13 @@ namespace polyfem
 			Eigen::VectorXd pt;
 			pt.setZero(3);
 			return cavity_pressures_.at(boundary_id).eval(pt, t);
+		}
+
+		double GenericTensorProblem::boundary_measure_bc(const int boundary_id, const double t) const
+		{
+			Eigen::VectorXd pt;
+			pt.setZero(3);
+			return boundary_measures_.at(boundary_id).eval(pt, t);
 		}
 
 		void GenericTensorProblem::exact(const Eigen::MatrixXd &pts, const double t, Eigen::MatrixXd &val) const
@@ -717,6 +730,32 @@ namespace polyfem
 				}
 			}
 
+			if (is_param_valid(params, "boundary_measure"))
+			{
+				const int offset = boundary_measure_ids_.size();
+
+				auto j_boundary_tmp = params["boundary_measure"];
+				std::vector<json> j_boundary = flatten_ids(j_boundary_tmp);
+
+				boundary_measure_ids_.resize(offset + j_boundary.size());
+
+				for (size_t i = offset; i < boundary_measure_ids_.size(); i++)
+				{
+					int boundary_id = j_boundary[i - offset]["id"];
+					boundary_measure_ids_[i] = boundary_id;
+
+					if (boundary_measures_.find(boundary_id) == boundary_measures_.end())
+					{
+						boundary_measures_[boundary_id] = ScalarBCValue();
+
+						auto ff = j_boundary[i - offset]["value"];
+						boundary_measures_[boundary_id].value.init(ff, root_path);
+
+						boundary_measures_[boundary_id].interpolation = std::make_shared<NoInterpolation>();
+					}
+				}
+			}
+
 			if (is_param_valid(params, "solution"))
 			{
 				auto rr = params["solution"];
@@ -874,6 +913,7 @@ namespace polyfem
 			normal_aligned_forces_.clear();
 			pressures_.clear();
 			cavity_pressures_.clear();
+			boundary_measures_.clear();
 
 			nodal_dirichlet_.clear();
 			nodal_neumann_.clear();

@@ -1,6 +1,8 @@
 set(SOURCES
 	BCLagrangianForm.cpp
 	BCLagrangianForm.hpp
+	BoundaryMeasureLagrangianForm.cpp
+	BoundaryMeasureLagrangianForm.hpp
 	PeriodicLagrangianForm.cpp
 	PeriodicLagrangianForm.hpp
 	AugmentedLagrangianForm.hpp

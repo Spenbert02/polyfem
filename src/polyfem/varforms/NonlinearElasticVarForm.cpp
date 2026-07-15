@@ -596,6 +596,8 @@ namespace polyfem::varform
 			elastic_boundary_samples(), rhs_, sol, mass_assembler_->density(),
 			// Pressure form
 			boundary_.local_pressure_boundary, boundary_.local_pressure_cavity, elasticity_pressure_assembler,
+			// Boundary measure form
+			boundary_.local_boundary_measure,
 			// Inertia form
 			args.value("/time/quasistatic"_json_pointer, true), mass_,
 			damping_assembler->is_valid() ? damping_assembler : nullptr,

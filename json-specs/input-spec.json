@@ -1780,7 +1780,8 @@
             "pressure_boundary",
             "pressure_cavity",
             "obstacle_displacements",
-            "periodic_boundary"
+            "periodic_boundary",
+            "boundary_measure"
         ],
         "doc": "The settings for boundary conditions."
     },
@@ -2087,6 +2088,35 @@
         "type": "include",
         "spec_file": "value-no.json",
         "doc": "Values of pressure boundary condition as a function of $x,y,z,t$"
+    },
+        {
+        "pointer": "/boundary_conditions/boundary_measure",
+        "default": [],
+        "type": "list",
+        "doc": "Boundary condition for change in value of boundary measure (perimeter/surface area). Not supported for 3d"
+    },
+    {
+        "pointer": "/boundary_conditions/boundary_measure/*",
+        "type": "object",
+        "default": null,
+        "required": [
+            "id",
+            "value"
+        ],
+        "doc": "Boundary measure BC entry"
+    },
+    {
+        "pointer": "/boundary_conditions/boundary_measure/*/id",
+        "type": "int",
+        "min": 0,
+        "max": 2147483646,
+        "doc": "ID for the boundary measure BC"
+    },
+    {
+        "pointer": "/boundary_conditions/boundary_measure/*/value",
+        "type": "include",
+        "spec_file": "value-no.json",
+        "doc": "Values of boundary measure change as function of $t$ (computed as $L_0 + value$)"
     },
     {
         "pointer": "/boundary_conditions/obstacle_displacements",

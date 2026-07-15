@@ -525,6 +525,7 @@ namespace polyfem::legacy
 		local_neumann_boundary.clear();
 		local_pressure_boundary.clear();
 		local_pressure_cavity.clear();
+		local_boundary_measure.clear();
 		polys.clear();
 		poly_edge_to_data.clear();
 		rhs.resize(0, 0);
@@ -563,6 +564,7 @@ namespace polyfem::legacy
 		local_neumann_boundary.clear();
 		local_pressure_boundary.clear();
 		local_pressure_cavity.clear();
+		local_boundary_measure.clear();
 		std::map<int, basis::InterfaceData> poly_edge_to_data_geom; // temp dummy variable
 
 		const auto &tmp_json = args["space"]["discr_order"];
@@ -834,6 +836,7 @@ namespace polyfem::legacy
 						  local_neumann_boundary,
 						  local_pressure_boundary,
 						  local_pressure_cavity,
+						  local_boundary_measure,
 						  pressure_boundary_nodes,
 						  dirichlet_nodes, neumann_nodes);
 

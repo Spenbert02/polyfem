@@ -57,6 +57,7 @@ namespace polyfem
 			void neumann_bc(const mesh::Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &uv, const Eigen::MatrixXd &pts, const Eigen::MatrixXd &normals, const double t, Eigen::MatrixXd &val) const override;
 			void pressure_bc(const mesh::Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &uv, const Eigen::MatrixXd &pts, const Eigen::MatrixXd &normals, const double t, Eigen::MatrixXd &val) const override;
 			double pressure_cavity_bc(const int boundary_id, const double t) const override;
+			double boundary_measure_bc(const int boundary_id, const double t) const override;
 
 			void dirichlet_nodal_value(const mesh::Mesh &mesh, const int node_id, const RowVectorNd &pt, const double t, Eigen::MatrixXd &val) const override;
 			void neumann_nodal_value(const mesh::Mesh &mesh, const int node_id, const RowVectorNd &pt, const Eigen::MatrixXd &normal, const double t, Eigen::MatrixXd &val) const override;
@@ -104,6 +105,7 @@ namespace polyfem
 			std::vector<ScalarBCValue> normal_aligned_forces_;
 			std::vector<ScalarBCValue> pressures_;
 			std::unordered_map<int, ScalarBCValue> cavity_pressures_;
+			std::unordered_map<int, ScalarBCValue> boundary_measures_;
 
 			std::vector<std::pair<int, std::array<utils::ExpressionValue, 3>>> initial_position_;
 			std::vector<std::pair<int, std::array<utils::ExpressionValue, 3>>> initial_velocity_;

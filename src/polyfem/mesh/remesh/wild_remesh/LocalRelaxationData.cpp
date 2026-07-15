@@ -110,7 +110,7 @@ namespace polyfem::mesh
 			*mesh, n_bases() - state.obstacle.n_vertices(), bases, /*geom_bases=*/bases,
 			/*pressure_bases=*/std::vector<basis::ElementBases>(), local_boundary,
 			boundary_nodes, local_neumann_boundary, local_pressure_boundary,
-			local_pressure_cavity, pressure_boundary_nodes, dirichlet_nodes, neumann_nodes);
+			local_pressure_cavity, local_boundary_measure, pressure_boundary_nodes, dirichlet_nodes, neumann_nodes);
 
 		auto find_node_position = [&](const int n_id) {
 			for (const auto &bs : bases)
@@ -264,6 +264,8 @@ namespace polyfem::mesh
 				target_x, mass_matrix_assembler->density(),
 				// Pressure form
 				local_pressure_boundary, local_pressure_cavity, pressure_assembler,
+				// boundary measure
+				local_boundary_measure,
 				// Inertia form
 				state.args.value("/time/quasistatic"_json_pointer, true), mass,
 				/*damping_assembler=*/nullptr,

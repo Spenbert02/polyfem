@@ -198,6 +198,7 @@ namespace polyfem::varform
 			boundary_.local_neumann_boundary,
 			boundary_.local_pressure_boundary,
 			boundary_.local_pressure_cavity,
+			boundary_.local_boundary_measure,
 			empty_pressure_boundary_nodes,
 			boundary_.dirichlet_nodes, boundary_.neumann_nodes);
 

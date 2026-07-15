@@ -54,6 +54,8 @@ namespace polyfem::legacy
 			n_boundary_samples(), rhs, Eigen::VectorXd::Zero(ndof) /* only to set neumann BC, not used*/, mass_matrix_assembler->density(),
 			// Pressure form
 			local_pressure_boundary, local_pressure_cavity, elasticity_pressure_assembler,
+			// Boundary measure form
+			local_boundary_measure,
 			// Inertia form
 			args.value("/time/quasistatic"_json_pointer, true), mass,
 			nullptr,

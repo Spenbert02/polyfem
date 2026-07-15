@@ -156,6 +156,7 @@ namespace polyfem::varform
 		std::vector<mesh::LocalBoundary> local_neumann_boundary;
 		std::vector<mesh::LocalBoundary> local_pressure_boundary;
 		std::unordered_map<int, std::vector<mesh::LocalBoundary>> local_pressure_cavity;
+		std::unordered_map<int, std::vector<mesh::LocalBoundary>> local_boundary_measure;
 		std::vector<int> pressure_boundary_nodes;
 		std::vector<int> dirichlet_nodes;
 		std::vector<RowVectorNd> dirichlet_nodes_position;
@@ -169,6 +170,7 @@ namespace polyfem::varform
 			local_neumann_boundary.clear();
 			local_pressure_boundary.clear();
 			local_pressure_cavity.clear();
+			local_boundary_measure.clear();
 			pressure_boundary_nodes.clear();
 			dirichlet_nodes.clear();
 			dirichlet_nodes_position.clear();

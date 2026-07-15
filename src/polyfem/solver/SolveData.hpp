@@ -92,6 +92,9 @@ namespace polyfem::solver
 			const std::unordered_map<int, std::vector<mesh::LocalBoundary>> &local_pressure_cavity,
 			const std::shared_ptr<assembler::PressureAssembler> pressure_assembler,
 
+			// Boundary measure form
+			const std::unordered_map<int, std::vector<mesh::LocalBoundary>> &local_boundary_measure,
+
 			// Inertia form
 			const bool ignore_inertia,
 			const StiffnessMatrix &mass,

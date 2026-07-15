@@ -37,6 +37,7 @@ namespace polyfem
 			virtual void neumann_bc(const mesh::Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &uv, const Eigen::MatrixXd &pts, const Eigen::MatrixXd &normals, const double t, Eigen::MatrixXd &val) const {}
 			virtual void pressure_bc(const mesh::Mesh &mesh, const Eigen::MatrixXi &global_ids, const Eigen::MatrixXd &uv, const Eigen::MatrixXd &pts, const Eigen::MatrixXd &normals, const double t, Eigen::MatrixXd &val) const {}
 			virtual double pressure_cavity_bc(const int boundary_id, const double t) const { return 0; }
+			virtual double boundary_measure_bc(const int boundary_id, const double t) const { return 0; }
 
 			virtual bool is_boundary_pressure(const int boundary_id) const { return std::find(pressure_boundary_ids_.begin(), pressure_boundary_ids_.end(), boundary_id) != pressure_boundary_ids_.end(); }
 
@@ -88,6 +89,12 @@ namespace polyfem
 				const std::vector<mesh::LocalBoundary> &local_boundary,
 				std::unordered_map<int, std::vector<mesh::LocalBoundary>> &local_pressure_cavity);
 
+			void setup_boundary_measure_bc(
+				const mesh::Mesh &mesh,
+				const int fe_space_id,
+				const std::vector<mesh::LocalBoundary> &local_boundary,
+				std::unordered_map<int, std::vector<mesh::LocalBoundary>> &local_boundary_measure);
+
 			// Returns nodal BC node ids, not constrained DOF ids.
 			void setup_nodal_bc(
 				const mesh::Mesh &mesh,
@@ -96,6 +103,7 @@ namespace polyfem
 				const int n_bases,
 				std::vector<int> &nodes);
 
+			/// *********** SB UPDATE THIS **************
 			/// @deprecated Legacy all-in-one BC setup. New VarForm code should use the
 			/// BoundaryKind overloads above and request only the BC data it owns.
 			void setup_bc(const mesh::Mesh &mesh,
@@ -104,6 +112,7 @@ namespace polyfem
 						  std::vector<mesh::LocalBoundary> &local_neumann_boundary,
 						  std::vector<mesh::LocalBoundary> &local_pressure_boundary,
 						  std::unordered_map<int, std::vector<mesh::LocalBoundary>> &local_pressure_cavity,
+						  std::unordered_map<int, std::vector<mesh::LocalBoundary>> &local_boundary_measure,
 						  std::vector<int> &pressure_boundary_nodes,
 						  std::vector<int> &dirichlet_nodes, std::vector<int> &neumann_nodes);
 
@@ -115,6 +124,7 @@ namespace polyfem
 			std::vector<int> normal_aligned_neumann_boundary_ids_;
 			std::vector<int> pressure_boundary_ids_;
 			std::vector<int> pressure_cavity_ids_;
+			std::vector<int> boundary_measure_ids_;
 			std::vector<int> splitting_pressure_boundary_ids_;
 
 			bool updated_dirichlet_node_ordering_ = false;
