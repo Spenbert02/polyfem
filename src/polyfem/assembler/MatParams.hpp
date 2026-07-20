@@ -179,6 +179,10 @@ namespace polyfem::assembler
 		std::vector<Eigen::Matrix<utils::ExpressionValue, Eigen::Dynamic, Eigen::Dynamic, 1, 3, 3>> dir_;
 		int size_;
 		bool has_rotation_;
+
+		// cache of expression values, to avoid recalling python every single time.
+		mutable std::mutex python_mutex_;
+		mutable std::map<std::tuple<int, double, double, double>, Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, 1, 3, 3>> cache_;
 	};
 
 } // namespace polyfem::assembler

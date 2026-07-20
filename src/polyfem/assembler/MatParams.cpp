@@ -501,21 +501,30 @@ namespace polyfem::assembler
 	Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, 1, 3, 3> FiberDirection::operator()(double px, double py, double pz, double x, double y, double z, double t, int el_id) const
 	{
 		assert(dir_.size() == 1 || el_id < dir_.size());
-
-		const auto &tmp = dir_.size() == 1 ? dir_[0] : dir_[el_id];
-		Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, 1, 3, 3> res;
-		res.resize(tmp.rows(), tmp.cols());
-		for (int i = 0; i < tmp.rows(); ++i)
+		const auto key = std::make_tuple(el_id, x, y, z);
 		{
-			for (int j = 0; j < tmp.cols(); ++j)
-			{
-				res(i, j) = tmp(i, j)(x, y, z, t, el_id);
+			// retreive from cache if possible
+			std::lock_guard<std::mutex> lock(python_mutex_);
+			auto it = cache_.find(key);
+			if (it != cache_.end())
+				return it->second;
 
-				assert(!std::isnan(res(i, j)));
-				assert(!std::isinf(res(i, j)));
+			// have to actually compute
+			const auto &tmp = dir_.size() == 1 ? dir_[0] : dir_[el_id];
+			Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, 1, 3, 3> res;
+			res.resize(tmp.rows(), tmp.cols());
+			for (int i = 0; i < tmp.rows(); ++i)
+			{
+				for (int j = 0; j < tmp.cols(); ++j)
+				{
+					res(i, j) = tmp(i, j)(x, y, z, t, el_id);
+
+					assert(!std::isnan(res(i, j)));
+					assert(!std::isinf(res(i, j)));
+				}
 			}
+			return res;
 		}
-		return res;
 	}
 
 	Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, 1, 6, 6> FiberDirection::stiffness_rotation_voigt(double px, double py, double pz, double x, double y, double z, double t, int el_id) const

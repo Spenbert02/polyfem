@@ -84,6 +84,11 @@ namespace polyfem
 #else
 						guard_ = new py::scoped_interpreter();
 #endif
+						// scoped_interpreter's constructor leaves the GIL held by this
+						// (the constructing) thread. Release it so that other threads
+						// (e.g. TBB assembly workers) can later acquire it via
+						// py::gil_scoped_acquire instead of blocking on it forever.
+						PyEval_SaveThread();
 					}
 				}
 
