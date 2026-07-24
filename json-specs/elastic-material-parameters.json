@@ -13,6 +13,7 @@
             "UnconstrainedOgden",
             "IncompressibleOgden",
             "ActiveFiber",
+            "ActinFiber",
             "HGOFiber",
             "IsochoricNeoHookean",
             "MaterialSum",
@@ -390,6 +391,22 @@
     {
         "pointer": "/",
         "type": "object",
+        "type_name": "ActinFiber",
+        "required": [
+            "type",
+            "activation"
+        ],
+        "optional": [
+            "id",
+            "rho",
+            "Tmax",
+            "fiber_direction"
+        ],
+        "doc": "Material Parameters"
+    },
+    {
+        "pointer": "/",
+        "type": "object",
         "type_name": "VolumePenalty",
         "required": [
             "type",
@@ -632,13 +649,13 @@
         "pointer": "/activation",
         "type": "include",
         "spec_file": "value-no.json",
-        "doc": "Activation parameter for ActiveFiber"
+        "doc": "Activation parameter for ActiveFiber/ActinFiber"
     },
     {
         "pointer": "/Tmax",
         "type": "include",
         "spec_file": "value1.json",
-        "doc": "Maximum tension for ActiveFiber",
+        "doc": "Maximum tension for ActiveFiber/ActinFiber",
         "default": 1
     },
     {

@@ -27,11 +27,12 @@ namespace polyfem::assembler
 			params_.lambda_mu(p, p, t, el_id, lambda, mu);
 
 			const T J = polyfem::utils::determinant(def_grad);
-			const auto Cbar = (def_grad.transpose() * def_grad / pow(J, 2.0 / 3.0)).eval();
+			const T pow_j = (this->size() == 2) ? J : pow(J, 2.0 / 3.0);
+			const auto Cbar = (def_grad.transpose() * def_grad / pow_j).eval();
 			const T I1_bar = Cbar.trace();
 
 			// Isochoric NK strain energy: Psi_iso = mu/2 * (I1_bar - 3)
-			return (mu / 2.0) * (I1_bar - T(3.0));
+			return T(mu / 2.0) * (I1_bar - T(this->size()));
 		}
 
 	private:

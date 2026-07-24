@@ -1245,7 +1245,7 @@ TEST_CASE("assembler utility factories and metadata", "[assembler][assembler_uti
 		"IncompressibleLinearElasticityPressure", "SaintVenant", "NeoHookean",
 		"IsochoricNeoHookean", "MooneyRivlin", "MooneyRivlin3Param",
 		"MooneyRivlin3ParamSymbolic", "MultiModels", "MaterialSum", "UnconstrainedOgden",
-		"IncompressibleOgden", "VolumePenalty", "HGOFiber", "ActiveFiber", "Stokes",
+		"IncompressibleOgden", "VolumePenalty", "HGOFiber", "ActiveFiber", "ActinFiber", "Stokes",
 		"StokesPressure", "NavierStokes", "OperatorSplitting", "AMIPS", "FixedCorotational"};
 	for (const std::string &formulation : formulations)
 		REQUIRE(AssemblerUtils::make_assembler(formulation) != nullptr);

@@ -7,6 +7,8 @@ set(SOURCES
 	AssemblyValsCache.cpp
 	AssemblyValsCache.hpp
 	AssemblyValues.hpp
+	ActinFiber.cpp
+	ActinFiber.hpp
 	ActiveFiber.cpp
 	ActiveFiber.hpp
 	Bilaplacian.cpp
