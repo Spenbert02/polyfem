@@ -74,7 +74,7 @@ option(POLYFEM_WITH_TESTS     "Build tests"                                 ON)
 option(POLYFEM_WITH_CLIPPER   "Use clipper, necessary for polygonal bases"  ON)
 option(POLYFEM_WITH_MMG       "Build MMG utils for remeshing"              OFF)
 option(POLYFEM_WITH_TRIANGLE  "Build target igl_restricted::triangle"      OFF)
-option(POLYFEM_WITH_BEZIER   "Use bezier, for Jacobian positivity check"    ON)
+set(POLYFEM_WITH_MISO "Use miso-generated code for Jacobian check" ON)
 option(POLYFEM_BUILD_DOCS     "Build documentation using Doxygen"          OFF)
 option(POLYFEM_REGENERATE_AUTOGEN    "Generate the python autogen files" OFF)
 set(POLYFEM_THREADING "TBB" CACHE STRING "Multithreading library to use (options: CPP, TBB, NONE)")
@@ -83,6 +83,18 @@ option(POLYFEM_CODE_COVERAGE "Enable coverage reporting" OFF)
 option(POLYFEM_WITH_ITR       "Build In timestep remeshing"              OFF)
 option(POLYFEM_WITH_PYTHON "Enable Python interpreter support" ON)
 option(POLYFEM_SILENCE_DEP_WARNINGS "Silence all compiler warnings for dependencies" OFF)
+option(POLYFEM_PORTABLE_BUILD "Avoid host-specific CPU instruction flags in dependencies" OFF)
+
+if(POLYFEM_PORTABLE_BUILD)
+    set(CMAKE_DISABLE_FIND_PACKAGE_AVX ON CACHE BOOL "Disable AVX autodetection for portable builds" FORCE)
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+        set(SIMD_C_FLAGS "-msse4.2" CACHE STRING "Flags used for compiling C programs with SIMD support" FORCE)
+        set(SIMD_CXX_FLAGS "-msse4.2" CACHE STRING "Flags used for compiling C++ programs with SIMD support" FORCE)
+    else()
+        set(IPC_TOOLKIT_WITH_SIMD OFF CACHE BOOL "Enable SIMD" FORCE)
+    endif()
+endif()
 
 add_library(polyfem_coverage_config INTERFACE)
 if(POLYFEM_CODE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -96,9 +108,9 @@ endif()
 
 # Set default minimum C++ standard
 if(POLYFEM_TOPLEVEL_PROJECT)
-    set(CMAKE_CXX_STANDARD 17)
-    set(CMAKE_CXX_STANDARD_REQUIRED ON)
-    set(CMAKE_CXX_EXTENSIONS OFF)
+    set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to use" FORCE)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE BOOL "Require the selected C++ standard" FORCE)
+    set(CMAKE_CXX_EXTENSIONS OFF CACHE BOOL "Disable compiler-specific C++ extensions" FORCE)
 endif()
 
 ### Configuration
@@ -192,12 +204,6 @@ endif()
 # Required libraries
 ################################################################################
 
-if(WIN32)
-    # Eigen
-    include(eigen)
-    target_link_libraries(polyfem PUBLIC Eigen3::Eigen)
-endif()
-
 # polysolve
 include(polysolve)
 target_link_libraries(polyfem PUBLIC polysolve::polysolve)
@@ -206,11 +212,6 @@ target_link_libraries(polyfem PUBLIC polysolve::polysolve)
 include(libigl)
 target_link_libraries(polyfem PUBLIC igl::core igl::predicates)
 
-if(NOT WIN32)
-    # Eigen
-    include(eigen)
-    target_link_libraries(polyfem PUBLIC Eigen3::Eigen)
-endif()
 
 # IPC Toolkit
 include(ipc_toolkit)
@@ -265,10 +266,10 @@ include(paraviewo)
 target_link_libraries(polyfem PUBLIC paraviewo::paraviewo)
 
 # Jacobian
-if(POLYFEM_WITH_BEZIER)
-    include(bezier)
-    target_link_libraries(polyfem PRIVATE bezier)
-    target_compile_definitions(polyfem PUBLIC POLYFEM_WITH_BEZIER)
+if(POLYFEM_WITH_MISO)
+    include(hocgv_miso)
+    target_link_libraries(polyfem PRIVATE miso)
+    target_compile_definitions(polyfem PUBLIC POLYFEM_WITH_MISO)
 endif()
 
 # spdlog

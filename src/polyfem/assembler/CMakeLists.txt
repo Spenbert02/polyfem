@@ -54,6 +54,8 @@ set(SOURCES
 	NeoHookeanElasticity.hpp
 	NeoHookeanElasticityAutodiff.cpp
 	NeoHookeanElasticityAutodiff.hpp
+	InversionBarrier.cpp
+	InversionBarrier.hpp
 	OgdenElasticity.cpp
 	OgdenElasticity.hpp
 	OgdenElasticity.tpp
@@ -65,6 +67,8 @@ set(SOURCES
 	SaintVenantElasticity.hpp
 	Stokes.cpp
 	Stokes.hpp
+	ThermoElasticity.cpp
+	ThermoElasticity.hpp
 	ViscousDamping.cpp
 	ViscousDamping.hpp
 	AMIPSEnergy.cpp

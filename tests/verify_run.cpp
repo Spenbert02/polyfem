@@ -190,7 +190,7 @@ AuthenticateResult authenticate_json(const std::string &json_file, const bool co
 	// ------------------------------------------------------------------------
 
 	args["/solver/linear/solver"_json_pointer] =
-		(json_file.find("navier") == std::string::npos && json_file.find("bilaplace") == std::string::npos)
+		(json_file.find("navier") == std::string::npos && json_file.find("bilaplace") == std::string::npos && json_file.find("thermoelastic") == std::string::npos)
 			? "Eigen::SimplicialLDLT"
 			: "Eigen::SparseLU";
 
@@ -299,6 +299,11 @@ TEST_CASE("selection", tagsrun)
 	run_data("selection", POLYFEM_DATA_DIR);
 }
 
+TEST_CASE("thermo", tagsrun)
+{
+	run_data("thermo", POLYFEM_DATA_DIR);
+}
+
 TEST_CASE("standard", tagsrun)
 {
 	run_data("standard", POLYFEM_DATA_DIR);
@@ -307,11 +312,6 @@ TEST_CASE("standard", tagsrun)
 TEST_CASE("time_int", tagsrun)
 {
 	run_data("time_int", POLYFEM_DATA_DIR);
-}
-
-TEST_CASE("old_tolerances", tagsrun)
-{
-	run_data("old_tolerances", POLYFEM_DATA_DIR);
 }
 
 TEST_CASE("runners-pref", tagsrun)
@@ -323,3 +323,10 @@ TEST_CASE("runners-polyspline", tagsrun)
 {
 	run_data("polyspline_test_list", POLYFEM_POLYSPLINE_DIR);
 }
+
+#ifdef POLYFEM_WITH_MISO
+TEST_CASE("miso", tagsrun)
+{
+	run_data("miso", POLYFEM_DATA_DIR);
+}
+#endif

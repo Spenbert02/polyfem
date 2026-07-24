@@ -17,6 +17,8 @@ namespace polyfem::assembler
 
 		auto models = params["models"];
 
+		// add_multimaterial may be invoked once per mesh element (see Assembler::set_materials),
+		// so the child assemblers must be created once and then reused across calls, not appended every time.
 		if (assemblers_.empty())
 		{
 			for (const auto &model : models)

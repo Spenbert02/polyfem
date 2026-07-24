@@ -621,7 +621,7 @@ namespace polyfem::legacy
 		}
 		// TODO: same for pressure!
 
-#ifdef POLYFEM_WITH_BEZIER
+#ifdef POLYFEM_WITH_MISO
 		if (!mesh->is_simplicial())
 #else
 		if constexpr (true)
@@ -717,6 +717,7 @@ namespace polyfem::legacy
 			// if(problem->is_mixed())
 			if (mixed_assembler != nullptr)
 			{
+				log_and_throw_error("Mixed formulation is not supported anymore for legacy!");
 				const int order = args["space"]["pressure_discr_order"];
 				// todo prism
 				const int orderq = order;
@@ -753,6 +754,8 @@ namespace polyfem::legacy
 			// if(problem->is_mixed())
 			if (mixed_assembler != nullptr)
 			{
+				log_and_throw_error("Mixed formulation is not supported anymore for legacy!");
+
 				n_pressure_bases = basis::LagrangeBasis2d::build_bases(tmp_mesh, assembler->name(), quadrature_order, mass_quadrature_order, int(args["space"]["pressure_discr_order"]), args["space"]["basis_type"] == "Bernstein", false, has_polys, false, use_corner_quadrature, pressure_bases, local_boundary, poly_edge_to_data_geom, pressure_mesh_nodes);
 			}
 		}
@@ -1711,7 +1714,7 @@ namespace polyfem::legacy
 			}
 
 			if (assembler->name() == "NavierStokes")
-				solve_transient_navier_stokes(time_steps, t0, dt, sol, pressure, user_post_step);
+				log_and_throw_error("NavierStokes is only supported through VarFormFactory");
 			else if (assembler->name() == "OperatorSplitting")
 				solve_transient_navier_stokes_split(time_steps, dt, sol, pressure, user_post_step);
 			else if (is_homogenization())
@@ -1726,7 +1729,7 @@ namespace polyfem::legacy
 		else
 		{
 			if (assembler->name() == "NavierStokes")
-				solve_navier_stokes(0, sol, pressure, user_post_step);
+				log_and_throw_error("NavierStokes is only supported through VarFormFactory");
 			else if (is_homogenization())
 				solve_homogenization(/* time steps */ 0, /* t0 */ 0, /* dt */ 0, sol, user_post_step);
 			else if (is_problem_linear())
