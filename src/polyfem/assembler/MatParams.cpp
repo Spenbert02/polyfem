@@ -538,29 +538,46 @@ namespace polyfem::assembler
 	{
 		assert(dir_.size() == 1 || el_id < dir_.size());
 		const auto key = std::make_tuple(el_id, x, y, z);
+
+		// retrieve from cache if possible; python_mutex_ only guards the map
+		// itself (not the Python call below), so a cache hit on one thread
+		// never blocks on another thread's in-flight Python evaluation. All
+		// materials assigned this type share one FiberDirection instance, so
+		// with many worker threads this lock is taken very frequently -- it
+		// must stay cheap.
 		{
-			// retreive from cache if possible
 			std::lock_guard<std::mutex> lock(python_mutex_);
 			auto it = cache_.find(key);
 			if (it != cache_.end())
 				return it->second;
-
-			// have to actually compute
-			const auto &tmp = dir_.size() == 1 ? dir_[0] : dir_[el_id];
-			Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, 1, 3, 3> res;
-			res.resize(tmp.rows(), tmp.cols());
-			for (int i = 0; i < tmp.rows(); ++i)
-			{
-				for (int j = 0; j < tmp.cols(); ++j)
-				{
-					res(i, j) = tmp(i, j)(x, y, z, t, el_id);
-
-					assert(!std::isnan(res(i, j)));
-					assert(!std::isinf(res(i, j)));
-				}
-			}
-			return res;
 		}
+
+		// have to actually compute; the Python GIL (acquired inside the call
+		// below) is what actually serializes concurrent Python evaluations,
+		// so python_mutex_ doesn't need to (and, for throughput, shouldn't)
+		// be held here too.
+		const auto &tmp = dir_.size() == 1 ? dir_[0] : dir_[el_id];
+		Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, 1, 3, 3> res;
+		res.resize(tmp.rows(), tmp.cols());
+		for (int i = 0; i < tmp.rows(); ++i)
+		{
+			for (int j = 0; j < tmp.cols(); ++j)
+			{
+				res(i, j) = tmp(i, j)(x, y, z, t, el_id);
+
+				assert(!std::isnan(res(i, j)));
+				assert(!std::isinf(res(i, j)));
+			}
+		}
+
+		// another thread may have computed and inserted the same key in the
+		// meantime; that's fine, emplace is a no-op in that case and both
+		// threads' (identical) results are equivalent.
+		{
+			std::lock_guard<std::mutex> lock(python_mutex_);
+			cache_.emplace(key, res);
+		}
+		return res;
 	}
 
 	Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, 1, 6, 6> FiberDirection::stiffness_rotation_voigt(double px, double py, double pz, double x, double y, double z, double t, int el_id) const

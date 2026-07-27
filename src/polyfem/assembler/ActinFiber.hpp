@@ -4,7 +4,9 @@
 #include <polyfem/assembler/GenericElastic.hpp>
 
 #include <map>
+#include <mutex>
 #include <string>
+#include <tuple>
 
 namespace polyfem::assembler
 {
@@ -31,19 +33,33 @@ namespace polyfem::assembler
 			// compute \Psi = a(t) * T_max * (sqrt(I4) - 1)
 
 			const double Tmax = Tmax_(p, t, el_id);
-			const double at = activation_(p, t, el_id);
+			const double at = cached_activation(p, t, el_id);
 
-			const T I4 = I4Bar_generic(p, t, el_id, def_grad, false, false);
-			const T lam = sqrt(I4);
+			const T I4 = I4Bar_generic(p, t, el_id, def_grad, false, true);
 			const double a = std::min(1.0, std::max(0.0, at));
 			const T Ta = T(Tmax * a);
 
 			// Energy
-			return Ta * (lam - T(1));
+			return T(0.5) * Ta * (I4 - T(1));
 		}
 
 	private:
+		// activation_ is Python-backed (see p2_test1_bcs.py's `activation`)
+		// and, unlike fiber_direction_ (cached in FiberDirection), was never
+		// given a C++-side cache -- every call re-acquired the GIL and
+		// re-entered Python. This is a hard-coded, single-parameter version
+		// of FiberDirection's existing cache pattern (MatParams.hpp/.cpp).
+		// Keyed by (x, y, t) only: activation depends purely on spatial
+		// position and time (not which element queries it, and this is a 2D
+		// sim so z is always 0), so el_id/z are omitted -- this also lets
+		// elements that share a point (e.g. adjacent triangles) share a
+		// cache hit instead of each re-entering Python.
+		double cached_activation(const RowVectorNd &p, double t, int el_id) const;
+
 		GenericMatParam Tmax_;
 		GenericMatParam activation_;
+
+		mutable std::mutex activation_mutex_;
+		mutable std::map<std::tuple<double, double, double>, double> activation_cache_;
 	};
 } // namespace polyfem::assembler

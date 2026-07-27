@@ -39,6 +39,8 @@ namespace polyfem::assembler
 								  const std::function<Eigen::MatrixXd(const Eigen::MatrixXd &)> &fun) const override;
 
 	private:
-		std::vector<std::shared_ptr<assembler::NLAssembler>> assemblers_;
+		// std::vector<std::shared_ptr<assembler::NLAssembler>> assemblers_;
+		std::unordered_map<std::string, std::shared_ptr<assembler::NLAssembler>> assemblers_by_type_;
+		std::unordered_map<int, std::vector<std::string>> element_types_;
 	};
 } // namespace polyfem::assembler

@@ -85,7 +85,11 @@ namespace polyfem::assembler
 					def_grad(d1, d2) = Diff(d1 * size() + d2, deformation_grad(d1, d2));
 			}
 
-			const auto val = derived().elastic_energy(local_pts.row(p), data.t, vals.element_id, def_grad);
+			// vals.val holds the physically-mapped (global) position of each
+			// point, aligned by row with local_pts -- elastic_energy (and
+			// anything it calls, e.g. GenericFiber's fiber_direction) expects
+			// a global point, not a reference-element coordinate.
+			const auto val = derived().elastic_energy(vals.val.row(p), data.t, vals.element_id, def_grad);
 
 			for (int d1 = 0; d1 < size(); ++d1)
 			{
