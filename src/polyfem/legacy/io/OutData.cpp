@@ -17,7 +17,7 @@
 
 #include <polyfem/time_integrator/ImplicitTimeIntegrator.hpp>
 
-#include <polyfem/solver/forms/SmoothContactForm.hpp>
+#include <polyfem/solver/forms/GCPContactForm.hpp>
 #include <polyfem/solver/forms/FrictionForm.hpp>
 #include <polyfem/solver/NLProblem.hpp>
 #include <polyfem/solver/forms/BodyForm.hpp>
@@ -1574,7 +1574,7 @@ namespace polyfem::legacy::io
 		Eigen::Vector<bool, -1> validity;
 		if (opts.jacobian_validity)
 			polyfem::io::Evaluator::mark_flipped_cells(
-				mesh, gbases, bases, state.disc_orders,
+				mesh, gbases, bases, state.disc_orders, state.disc_ordersq,
 				state.polys, state.polys_3d, ref_element_sampler,
 				points.rows(), sol, validity, opts.use_sampler, opts.boundary_only);
 
@@ -2038,7 +2038,7 @@ namespace polyfem::legacy::io
 				for (int i = 0; i < tets.rows(); ++i)
 				{
 					elements.emplace_back();
-					elements.back().ctype = CellType::Tetrahedron;
+					elements.back().ctype = mesh.is_volume() ? CellType::Tetrahedron : CellType::Triangle;
 					for (int j = 0; j < tets.cols(); ++j)
 						elements.back().vertices.push_back(tets(i, j));
 				}
@@ -2365,7 +2365,7 @@ namespace polyfem::legacy::io
 
 		if (contact_form && state.args["contact"]["use_gcp_formulation"] && state.args["contact"]["use_adaptive_dhat"] && opts.export_field("adaptive_dhat"))
 		{
-			const auto form = std::dynamic_pointer_cast<solver::SmoothContactForm>(contact_form);
+			const auto form = std::dynamic_pointer_cast<solver::GCPContactForm>(contact_form);
 			assert(form);
 			const auto &set = form->collision_set();
 

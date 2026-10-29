@@ -37,11 +37,14 @@ namespace polyfem::varform
 	class ThermoElasticVarForm : public NonlinearElasticVarForm
 	{
 	public:
+		using NonlinearElasticVarForm::NonlinearElasticVarForm;
 		std::string name() const override { return "ThermoElastic"; }
 
 		void init(const std::string &formulation, const Units &units, const json &args, const std::string &out_path) override;
 
 		io::OutStatsData compute_errors(const Eigen::MatrixXd &solution) override;
+		void serialize_checkpoint(io::CheckpointWriter &writer, const Eigen::MatrixXd &solution, const io::CheckpointMetadata &metadata) const override;
+		void deserialize_checkpoint(const io::CheckpointReader &reader, Eigen::MatrixXd &solution) override;
 
 		std::vector<io::OutputField> output_fields(
 			const io::OutputSample &sample,
@@ -54,7 +57,10 @@ namespace polyfem::varform
 		void build_basis(mesh::Mesh &mesh, const bool iso_parametric, const json &args) override;
 		void assemble_rhs(const mesh::Mesh &mesh) override;
 		void assemble_mass_mat(const mesh::Mesh &mesh, const json &args) override;
-		void solve_problem(Eigen::MatrixXd &sol) override;
+		void solve_problem(
+			Eigen::MatrixXd &sol,
+			const InitialConditionOverride *initial_condition_override,
+			const ForwardStepCallback &post_step) override;
 		void build_rhs_assembler() override;
 
 		void read_material_space_ids(const json &args);

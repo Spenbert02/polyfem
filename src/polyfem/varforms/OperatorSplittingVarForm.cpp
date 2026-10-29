@@ -19,6 +19,47 @@
 
 namespace polyfem::varform
 {
+	void OperatorSplittingVarForm::serialize_checkpoint(
+		io::CheckpointWriter &writer,
+		const Eigen::MatrixXd &solution,
+		const io::CheckpointMetadata &metadata) const
+	{
+		VarForm::serialize_checkpoint(writer, solution, metadata);
+		write_checkpoint_ordering(writer, "primary", space_);
+		write_checkpoint_ordering(writer, "pressure", pressure_space_);
+		Eigen::MatrixXd velocity, pressure;
+		split_solution(solution, velocity, pressure);
+		writer.write_matrix("/checkpoint/state/velocity", velocity);
+		writer.write_matrix("/checkpoint/state/pressure", pressure);
+	}
+
+	void OperatorSplittingVarForm::deserialize_checkpoint(
+		const io::CheckpointReader &reader,
+		Eigen::MatrixXd &solution)
+	{
+		VarForm::deserialize_checkpoint(reader, solution);
+		validate_checkpoint_solution(solution, stacked_ndof());
+		for (const std::string &path : {
+				 "/checkpoint/state/velocity", "/checkpoint/state/pressure"})
+			if (!reader.exists(path))
+				log_and_throw_error("Operator-splitting checkpoint is missing {}.", path);
+
+		Eigen::MatrixXd velocity = reader.read_matrix("/checkpoint/state/velocity");
+		Eigen::MatrixXd pressure = reader.read_matrix("/checkpoint/state/pressure");
+		if (velocity.rows() != primary_ndof() || velocity.cols() != 1)
+			log_and_throw_error("Operator-splitting checkpoint velocity has invalid dimensions.");
+		if (pressure.rows() != pressure_space_.n_bases || pressure.cols() != 1)
+			log_and_throw_error("Operator-splitting checkpoint pressure has invalid dimensions.");
+		if (!solution.topRows(primary_ndof()).isApprox(velocity)
+			|| !solution.middleRows(primary_ndof(), pressure_space_.n_bases).isApprox(pressure))
+			log_and_throw_error("Operator-splitting checkpoint contains inconsistent solution blocks.");
+
+		reorder_checkpoint_block(reader, "primary", space_, mesh_->dimension(), 0, velocity);
+		reorder_checkpoint_block(reader, "pressure", pressure_space_, 1, 0, pressure);
+		solution.topRows(primary_ndof()) = velocity;
+		solution.middleRows(primary_ndof(), pressure_space_.n_bases) = pressure;
+	}
+
 	using namespace varform::internal;
 
 	void OperatorSplittingVarForm::reset()
@@ -62,13 +103,12 @@ namespace polyfem::varform
 
 			json tmp;
 			tmp["is_time_dependent"] = is_time_dependent;
-			problem->set_parameters(tmp, root_path);
+			problem->set_parameters(tmp, resources_);
 
 			auto bc = args["boundary_conditions"];
-			bc["root_path"] = root_path;
-			problem->set_parameters(bc, root_path);
-			problem->set_parameters(args["initial_conditions"], root_path);
-			problem->set_parameters(args["output"], root_path);
+			problem->set_parameters(bc, resources_);
+			problem->set_parameters(args["initial_conditions"], resources_);
+			problem->set_parameters(args["output"], resources_);
 		}
 		else
 		{
@@ -82,7 +122,7 @@ namespace polyfem::varform
 				problem = problem::ProblemFactory::factory().get_problem(args["preset_problem"]["type"]);
 				problem->clear();
 			}
-			problem->set_parameters(args["preset_problem"], root_path);
+			problem->set_parameters(args["preset_problem"], resources_);
 		}
 
 		problem->set_units(*primary_assembler_, units);
@@ -301,7 +341,7 @@ namespace polyfem::varform
 			*primary_assembler_, *mesh_, nullptr,
 			boundary_.dirichlet_nodes, boundary_.neumann_nodes,
 			boundary_.dirichlet_nodes_position, boundary_.neumann_nodes_position,
-			space_.n_bases, mesh_->dimension(), space_.basis_list(), space_.geometry_basis_list(), mass_ass_vals_cache_, *problem,
+			space_.n_bases, mesh_->dimension(), space_.basis_list(), space_.geometry_basis_list(), mass_ass_vals_cache_, *problem, resources_,
 			args["space"]["advanced"]["bc_method"],
 			rhs_solver_params,
 			/*fe_space_id=*/-1);
@@ -313,8 +353,8 @@ namespace polyfem::varform
 		assert(primary_assembler_);
 		assert(mass_assembler_);
 
-		Eigen::VectorXi space_disc_orders;
-		assign_discr_orders(args["space"]["discr_order"], mesh, space_disc_orders);
+		Eigen::VectorXi space_disc_orders, space_disc_ordersq;
+		assign_discr_orders(args["space"], mesh, space_disc_orders, space_disc_ordersq);
 
 		if (args["space"]["use_p_ref"])
 		{
@@ -334,6 +374,7 @@ namespace polyfem::varform
 			mesh,
 			iso_parametric,
 			space_disc_orders,
+			space_disc_ordersq,
 			args["space"]["basis_type"],
 			args["space"]["poly_basis_type"],
 			*primary_assembler_,
@@ -385,13 +426,14 @@ namespace polyfem::varform
 		const bool use_corner_quadrature = args["space"]["advanced"]["use_corner_quadrature"];
 		const int quadrature_order = args["space"]["advanced"]["quadrature_order"].get<int>();
 		const int mass_quadrature_order = args["space"]["advanced"]["mass_quadrature_order"].get<int>();
-		Eigen::VectorXi pressure_disc_orders;
-		assign_discr_orders(args["space"]["discr_order"], mesh, pressure_disc_orders);
+		Eigen::VectorXi pressure_disc_orders, pressure_disc_ordersq;
+		assign_discr_orders(args["space"], mesh, pressure_disc_orders, pressure_disc_ordersq);
 		const std::string pressure_basis_type = args["space"]["basis_type"].get<std::string>() == "Bernstein" ? "Bernstein" : "Lagrange";
 		build_fe_space(
 			mesh,
 			/*iso_parametric=*/true,
 			pressure_disc_orders,
+			pressure_disc_ordersq,
 			pressure_basis_type,
 			args["space"]["poly_basis_type"],
 			*primary_assembler_,
@@ -460,7 +502,6 @@ namespace polyfem::varform
 		igl::Timer timer;
 		json p_params = {};
 		p_params["formulation"] = primary_assembler_->name();
-		p_params["root_path"] = root_path;
 		{
 			RowVectorNd min, max, delta;
 			mesh.bounding_box(min, max);
@@ -470,7 +511,7 @@ namespace polyfem::varform
 			else
 				p_params["bbox_center"] = {delta(0), delta(1)};
 		}
-		problem->set_parameters(p_params, root_path);
+		problem->set_parameters(p_params, resources_);
 
 		rhs_.resize(0, 0);
 
@@ -504,20 +545,12 @@ namespace polyfem::varform
 		if (sol.size() <= 0)
 		{
 			assert(rhs_assembler_ != nullptr);
-			const bool was_solution_loaded = read_initial_x_from_file(
-				resolve_input_path(args["input"]["data"]["state"]), "u",
-				args["input"]["data"]["reorder"], space_.space_in_node_to_node,
-				mesh_->dimension(), sol);
-
-			if (!was_solution_loaded)
+			if (problem->is_time_dependent())
+				rhs_assembler_->initial_solution(sol);
+			else
 			{
-				if (problem->is_time_dependent())
-					rhs_assembler_->initial_solution(sol);
-				else
-				{
-					sol.resize(rhs_.size(), 1);
-					sol.setZero();
-				}
+				sol.resize(rhs_.size(), 1);
+				sol.setZero();
 			}
 		}
 		if (sol.cols() > 1)
@@ -713,8 +746,14 @@ namespace polyfem::varform
 		return fields;
 	}
 
-	void OperatorSplittingVarForm::solve_problem(Eigen::MatrixXd &sol)
+	void OperatorSplittingVarForm::solve_problem(
+		Eigen::MatrixXd &sol,
+		const InitialConditionOverride *initial_condition_override,
+		const ForwardStepCallback &post_step)
 	{
+		assert(!initial_condition_override && "Operator splitting does not support initial-condition overrides");
+		assert(!post_step && "Operator splitting does not support post-step callbacks");
+
 		stats.spectrum.setZero();
 
 		if (!problem->is_time_dependent())
@@ -733,7 +772,8 @@ namespace polyfem::varform
 
 		Eigen::MatrixXd local_pts;
 		const auto &gbases = space_.geometry_basis_list();
-		const int discr_order = space_.disc_orders.size() > 0 ? space_.disc_orders.maxCoeff() : 1;
+		assert(space_.disc_orders.size() > 0 && "Operator splitting requires initialized FE orders");
+		const int discr_order = space_.disc_orders.maxCoeff();
 		if (mesh_->dimension() == 2)
 		{
 			if (gbases[0].bases.size() == 3)
@@ -789,9 +829,7 @@ namespace polyfem::varform
 			*mesh_, shape, n_el, boundary_.local_boundary, boundary_.boundary_nodes, pressure_boundary_.boundary_nodes, bnd_nodes, mass_,
 			stiffness_viscosity, pressure_stiffness, velocity_mass, dt, viscosity, args["solver"]["linear"]);
 
-		pressure = Eigen::MatrixXd::Zero(pressure_space_.n_bases, 1);
-
-		const QuadratureOrders boundary_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), discr_order);
+		const QuadratureOrders boundary_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), space_.disc_ordersq.maxCoeff(), discr_order);
 		for (int t = 1; t <= time_steps; ++t)
 		{
 			const double time = t0 + t * dt;
@@ -826,6 +864,7 @@ namespace polyfem::varform
 
 			stack_solution(velocity, pressure, sol);
 			save_timestep(time, t, t0, dt, sol);
+			save_step_state(t0, dt, t, sol, nullptr);
 			notify_time_step(t, time_steps, t0, dt);
 		}
 

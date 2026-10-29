@@ -7,8 +7,12 @@
 
 #include <polyfem/optimization/DiffCache.hpp>
 #include <polyfem/optimization/var2sims/VariableToSimulationGroup.hpp>
+#include <polyfem/varforms/diff/DifferentiableVarForm.hpp>
+#include <polyfem/io/ResourceIO.hpp>
 
 #include <Eigen/Core>
+
+#include <polysolve/nonlinear/Criteria.hpp>
 
 #include <string>
 #include <vector>
@@ -16,17 +20,12 @@
 
 namespace polyfem
 {
-	namespace legacy
-	{
-		class State;
-	}
-
 	namespace solver
 	{
 		class AdjointNLProblem;
 	} // namespace solver
 
-	/// main class that contains the polyfem adjoint solver and all its state
+	/// Main class containing the PolyFEM adjoint solver and its optimization data.
 	class OptState
 	{
 	public:
@@ -42,6 +41,11 @@ namespace polyfem
 		/// @param[in] args input arguments
 		/// @param[in] strict_validation strict validation of input
 		void init(const json &args, const bool strict_validation);
+		void init(const json &args, const io::ResourceIO &resources, bool strict_validation);
+
+		/// Run optimization, including remeshing restarts when the selected trigger requests them.
+		int run(json args, const bool strict_validation);
+		int run(json args, const io::ResourceIO &resources, bool strict_validation);
 
 		/// main input arguments containing all defaults
 		json args;
@@ -66,8 +70,8 @@ namespace polyfem
 		/// @param[in] log_level 0 all message, 6 no message. 2 is info, 1 is debug
 		void set_log_level(const spdlog::level::level_enum log_level);
 
-		/// @brief create the opt states
-		void create_states(const int max_threads = -1);
+		/// @brief Create the optimization variational formulations.
+		void create_varforms(const int max_threads = -1);
 
 		/// init variables
 		void init_variables();
@@ -78,14 +82,16 @@ namespace polyfem
 
 		double eval(Eigen::VectorXd &x) const;
 
-		void solve(Eigen::VectorXd &x);
+		polysolve::nonlinear::Status solve(Eigen::VectorXd &x);
 
 		//---------------------------------------------------
-		//-----------------state--------------------
+		//-----------------varforms--------------------
 		//---------------------------------------------------
 
-		/// legacy::State used in the opt
-		std::vector<std::shared_ptr<legacy::State>> states;
+		/// Variational formulations used by the optimization.
+		std::vector<std::shared_ptr<varform::DifferentiableVarForm>> varforms;
+		std::vector<json> state_args;
+		std::vector<std::unique_ptr<const io::ResourceIO>> state_resources;
 		std::vector<std::shared_ptr<DiffCache>> diff_caches;
 
 		/// @brief variables
@@ -97,14 +103,7 @@ namespace polyfem
 		std::unique_ptr<solver::AdjointNLProblem> nl_problem;
 
 	private:
-		inline std::string root_path() const
-		{
-			if (utils::is_param_valid(args, "root_path"))
-				return args["root_path"].get<std::string>();
-			return "";
-		}
-
-		/// @brief Check and throw if any forward simulation legacy::State is not supported.
+		/// @brief Check and throw if any forward simulation varform::DifferentiableVarForm is not supported.
 		void check_unsupported() const;
 
 		/// initializing the logger meant for internal usage
@@ -113,6 +112,10 @@ namespace polyfem
 		/// logger sink to stdout
 		spdlog::sink_ptr console_sink_ = nullptr;
 		spdlog::sink_ptr file_sink_ = nullptr;
+
+		bool remeshing_requested_ = false;
+		bool strict_validation_ = true;
+		std::unique_ptr<const io::ResourceIO> resources_;
 
 		//---------------------------------------------------
 		//-----------------output--------------------

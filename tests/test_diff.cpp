@@ -1,5 +1,3 @@
-#include <polyfem/legacy/State.hpp>
-
 #include <polyfem/assembler/AssemblerUtils.hpp>
 
 #include <polyfem/optimization/Optimizations.hpp>
@@ -7,9 +5,9 @@
 #include <polyfem/optimization/BuildFromJson.hpp>
 #include <polyfem/optimization/DiffCache.hpp>
 #include <polyfem/optimization/OptState.hpp>
+#include <polyfem/io/InputLoader.hpp>
 #include <polyfem/optimization/AdjointNLProblem.hpp>
 #include <polyfem/optimization/var2sims/ElasticVariableToSimulation.hpp>
-#include <polyfem/optimization/forms/SmoothingForms.hpp>
 #include <polyfem/optimization/forms/TargetForms.hpp>
 #include <polyfem/optimization/parametrization/Parametrizations.hpp>
 
@@ -64,27 +62,31 @@ namespace
 		return true;
 	}
 
-	void sample_field(const legacy::State &state, std::function<Eigen::MatrixXd(const Eigen::MatrixXd &)> field, Eigen::MatrixXd &discrete_field, const int order = 1)
+	void sample_field(
+		const varform::DifferentiableVarForm &varform,
+		std::function<Eigen::MatrixXd(const Eigen::MatrixXd &)> field,
+		Eigen::MatrixXd &discrete_field,
+		const int order = 1)
 	{
 		Eigen::MatrixXd tmp;
-		tmp.setZero(1, state.mesh->dimension());
+		tmp.setZero(1, varform.get_mesh().dimension());
 		tmp = field(tmp);
 		const int actual_dim = tmp.cols();
 
 		if (order >= 1)
 		{
 			Eigen::MatrixXd V;
-			state.get_vertices(V);
+			varform.get_vertices(V);
 
 			discrete_field = utils::flatten(field(V));
 		}
 		else if (order == 0)
 		{
 			Eigen::MatrixXd centers;
-			if (state.mesh->is_volume())
-				state.mesh->cell_barycenters(centers);
+			if (varform.get_mesh().is_volume())
+				varform.get_mesh().cell_barycenters(centers);
 			else
-				state.mesh->face_barycenters(centers);
+				varform.get_mesh().face_barycenters(centers);
 
 			discrete_field = utils::flatten(field(centers));
 		}
@@ -183,7 +185,7 @@ namespace
 			args["solver"]["max_threads"] = 1;
 
 			opt.init(args, false);
-			opt.create_states(/*max_threads=*/1);
+			opt.create_varforms(/*max_threads=*/1);
 			opt.init_variables();
 			opt.create_problem();
 		}
@@ -281,7 +283,7 @@ TEST_CASE("laplacian", "[opt_gradient]")
 		return vel;
 	};
 	Eigen::MatrixXd velocity_discrete;
-	sample_field(*(ctx.opt.states[0]), velocity, velocity_discrete);
+	sample_field(*(ctx.opt.varforms[0]), velocity, velocity_discrete);
 
 	for (int i = 0; i < REPEAT; ++i)
 	{
@@ -416,12 +418,16 @@ TEST_CASE("node-trajectory", "[opt_gradient]")
 
 	// One state only.
 	std::string root = POLYFEM_DIFF_DIR + std::string("/input/");
-	auto states =
-		from_json::build_states(root, opt_args["states"], -1, opt_args["output"]["log"]);
+	auto loaded_state = io::load_json_input(
+		std::filesystem::path(root) / opt_args["states"][0]["path"].get<std::string>());
+	json state_args = loaded_state.config;
+	state_args["output"]["log"].merge_patch(opt_args["output"]["log"]);
+	std::vector<std::shared_ptr<varform::DifferentiableVarForm>> varforms = {
+		from_json::build_differentiable_varform(state_args, *loaded_state.resources, -1)};
 	std::vector<std::shared_ptr<DiffCache>> diff_caches = {std::make_shared<DiffCache>()};
 
 	auto elastic_var2sim =
-		std::make_shared<ElasticVariableToSimulation>(states, diff_caches, CompositeParametrization{});
+		std::make_shared<ElasticVariableToSimulation>(varforms, diff_caches, CompositeParametrization{});
 	VariableToSimulationGroup var2sim_group;
 	var2sim_group.data.push_back(elastic_var2sim);
 
@@ -429,7 +435,7 @@ TEST_CASE("node-trajectory", "[opt_gradient]")
 	constexpr int REPEAT = 3;
 	std::mt19937_64 rng(SEED);
 	Eigen::MatrixXd targets =
-		uniform_random_matrix(states[0]->n_bases, states[0]->mesh->dimension(), rng, 0.0, 10.0);
+		uniform_random_matrix(varforms[0]->primary_space().n_bases, varforms[0]->get_mesh().dimension(), rng, 0.0, 10.0);
 
 	// All active.
 	std::vector<int> actives(targets.rows());
@@ -439,8 +445,8 @@ TEST_CASE("node-trajectory", "[opt_gradient]")
 	}
 
 	auto form =
-		std::make_shared<NodeTargetForm>(states[0], diff_caches[0], var2sim_group, actives, targets);
-	AdjointNLProblem problem{form, var2sim_group, states, diff_caches, opt_args};
+		std::make_shared<NodeTargetForm>(varforms[0], diff_caches[0], var2sim_group, actives, targets);
+	AdjointNLProblem problem{form, var2sim_group, varforms, diff_caches, opt_args};
 	Eigen::VectorXd x = var2sim_group.data[0]->inverse_eval();
 	constexpr double TOL = 4.9e-5;
 	for (int i = 0; i < REPEAT; ++i)
@@ -471,7 +477,22 @@ TEST_CASE("shape-transient-friction", "[opt_gradient]")
 	constexpr uint64_t SEED = BASE_SEED + 15;
 	constexpr int REPEAT = 3;
 	constexpr double TOL = 1.1e-5;
-	run_test1("shape-transient-friction-opt.json", 1e-6, TOL, 0.0, 1.0, SEED, REPEAT);
+	TestContext ctx{"shape-transient-friction-opt.json"};
+
+	// The FD step of 1e-6 amplifies forward-solve error by 5e5, and the
+	// scene's grad_norm_tol of 2.5e-10 leaves enough of it to exceed TOL.
+	for (auto &varform : ctx.opt.varforms)
+		varform->get_args()["solver"]["nonlinear"]["grad_norm_tol"] = 1e-11;
+
+	Eigen::VectorXd x;
+	ctx.opt.initial_guess(x);
+
+	std::mt19937_64 rng(SEED);
+	for (int i = 0; i < REPEAT; ++i)
+	{
+		Eigen::MatrixXd velocity = uniform_random_matrix(x.size(), 1, rng, 0.0, 1.0);
+		verify_adjoint(*ctx.opt.nl_problem, x, velocity, 1e-6f, TOL, "shape-transient-friction", i, SEED);
+	}
 }
 
 TEST_CASE("shape-transient-friction-sdf", "[opt_gradient]")
@@ -532,9 +553,9 @@ TEST_CASE("barycenter", "[opt_gradient]")
 	Eigen::VectorXd x;
 	ctx.opt.initial_guess(x);
 
-	int dof_num = ctx.opt.states[0]->ndof();
+	int dof_num = ctx.opt.varforms[0]->primary_space().ndof();
 	Eigen::MatrixXd velocity = Eigen::MatrixXd::Zero(ctx.opt.ndof, 1);
-	for (int i = 0; i < ctx.opt.states[0]->n_bases; i++)
+	for (int i = 0; i < ctx.opt.varforms[0]->primary_space().n_bases; i++)
 	{
 		velocity(dof_num + i * 2 + 0) = -2.0f;
 		velocity(dof_num + i * 2 + 1) = -1.0f;
@@ -553,16 +574,16 @@ TEST_CASE("shape-contact-smooth", "[opt_gradient]")
 	constexpr double TOL = 7.5e-7;
 	TestContext ctx{"shape-contact-opt.json"};
 
-	// Because state configs are shared, tailor json args.
-	for (auto &state : ctx.opt.states)
+	// Because varform configs are shared, tailor JSON args.
+	for (auto &varform : ctx.opt.varforms)
 	{
-		state->args["contact"]["use_gcp_formulation"] = true;
-		state->args["contact"]["use_convergent_formulation"] = false;
-		state->args["contact"]["alpha_t"] = 0.95;
+		varform->get_args()["contact"]["use_gcp_formulation"] = true;
+		varform->get_args()["contact"]["use_convergent_formulation"] = false;
+		varform->get_args()["contact"]["alpha_t"] = 0.95;
 	}
 
 	Eigen::MatrixXd V;
-	ctx.opt.states[0]->get_vertices(V);
+	ctx.opt.varforms[0]->get_vertices(V);
 	Eigen::VectorXd x = utils::flatten(V);
 
 	ctx.opt.nl_problem->solution_changed(x);
@@ -579,13 +600,13 @@ TEST_CASE("initial-contact-smooth", "[opt_gradient]")
 {
 	TestContext ctx{"initial-contact-smooth-opt.json"};
 
-	// Because state configs are shared, tailor json args.
-	for (auto &state : ctx.opt.states)
+	// Because varform configs are shared, tailor JSON args.
+	for (auto &varform : ctx.opt.varforms)
 	{
-		state->args["contact"]["use_gcp_formulation"] = true;
-		state->args["contact"]["use_convergent_formulation"] = false;
-		state->args["contact"]["alpha_t"] = 0.95;
-		state->args["contact"]["friction_coefficient"] = 0;
+		varform->get_args()["contact"]["use_gcp_formulation"] = true;
+		varform->get_args()["contact"]["use_convergent_formulation"] = false;
+		varform->get_args()["contact"]["alpha_t"] = 0.95;
+		varform->get_args()["contact"]["friction_coefficient"] = 0;
 	}
 
 	Eigen::VectorXd x;
@@ -606,17 +627,17 @@ TEST_CASE("shape-transient-smooth", EXPENSIVE_TEST_LABEL)
 {
 	TestContext ctx{"shape-transient-friction-opt.json"};
 
-	// Because states are shared, tailor json args.
-	for (auto &state : ctx.opt.states)
+	// Because varforms are shared, tailor JSON args.
+	for (auto &varform : ctx.opt.varforms)
 	{
-		state->args["contact"]["use_gcp_formulation"] = true;
-		state->args["contact"]["alpha_t"] = 0.95;
-		state->args["contact"]["friction_coefficient"] = 0;
-		state->args["solver"]["nonlinear"]["grad_norm_tol"] = 1e-8;
+		varform->get_args()["contact"]["use_gcp_formulation"] = true;
+		varform->get_args()["contact"]["alpha_t"] = 0.95;
+		varform->get_args()["contact"]["friction_coefficient"] = 0;
+		varform->get_args()["solver"]["nonlinear"]["grad_norm_tol"] = 1e-8;
 	}
 
 	Eigen::MatrixXd V;
-	ctx.opt.states[0]->get_vertices(V);
+	ctx.opt.varforms[0]->get_vertices(V);
 	Eigen::VectorXd x = utils::flatten(V);
 
 	constexpr uint64_t SEED = BASE_SEED + 24;
@@ -654,6 +675,14 @@ TEST_CASE("dirichlet-nodes-3d", "[opt_gradient]")
 	run_test1("dirichlet-nodes-3d-opt.json", 1e-7, TOL, 0.0, 1.0, SEED, REPEAT);
 }
 
+TEST_CASE("elastic-material-smoothing", "[opt_gradient]")
+{
+	constexpr int REPEAT = 1;
+	constexpr double TOL = 2e-7;
+	run_test1("elastic-material-smoothing-2d-opt.json", 1e-6, TOL, -0.4, 0.6, BASE_SEED + 32, REPEAT);
+	run_test1("elastic-material-smoothing-3d-opt.json", 1e-6, TOL, -0.3, 0.2, BASE_SEED + 33, REPEAT);
+}
+
 // Only on windows debug build homogenize tests failed with:
 // "Failed to factorize constraints matrix"
 //
@@ -667,9 +696,9 @@ TEST_CASE("homogenize-stress-periodic", EXPENSIVE_TEST_LABEL)
 	Eigen::VectorXd x;
 	ctx.opt.initial_guess(x);
 
-	auto &state = *(ctx.opt.states[0]);
+	auto &varform = *(ctx.opt.varforms[0]);
 	Eigen::MatrixXd V;
-	state.get_vertices(V);
+	varform.get_vertices(V);
 	Eigen::VectorXd min = V.colwise().minCoeff();
 	Eigen::VectorXd max = V.colwise().maxCoeff();
 
@@ -684,7 +713,7 @@ TEST_CASE("homogenize-stress-periodic", EXPENSIVE_TEST_LABEL)
 		Eigen::MatrixXd velocity = uniform_random_matrix(x.size(), 1, rng, 0.0, 1.0);
 		for (int i = 0; i < V.rows(); i++)
 		{
-			auto vert = state.mesh->point(i);
+			auto vert = varform.get_mesh().point(i);
 			if (vert(0) < min(0) + BOUNDARY_EPS || vert(0) > max(0) - BOUNDARY_EPS || vert(1) < min(1) + BOUNDARY_EPS || vert(1) > max(1) - BOUNDARY_EPS)
 			{
 				for (int d = 0; d < 2; d++)
@@ -702,9 +731,9 @@ TEST_CASE("homogenize-stress", EXPENSIVE_TEST_LABEL)
 	Eigen::VectorXd x;
 	ctx.opt.initial_guess(x);
 
-	auto &state = *(ctx.opt.states[0]);
+	auto &varform = *(ctx.opt.varforms[0]);
 	Eigen::MatrixXd V;
-	state.get_vertices(V);
+	varform.get_vertices(V);
 	Eigen::VectorXd min = V.colwise().minCoeff();
 	Eigen::VectorXd max = V.colwise().maxCoeff();
 
@@ -719,7 +748,7 @@ TEST_CASE("homogenize-stress", EXPENSIVE_TEST_LABEL)
 		Eigen::MatrixXd velocity = uniform_random_matrix(x.size(), 1, rng, 0.0, 1.0);
 		for (int i = 0; i < V.rows(); i++)
 		{
-			auto vert = state.mesh->point(i);
+			auto vert = varform.get_mesh().point(i);
 			if (vert(0) < min(0) + BOUNDARY_EPS || vert(0) > max(0) - BOUNDARY_EPS || vert(1) < min(1) + BOUNDARY_EPS || vert(1) > max(1) - BOUNDARY_EPS)
 			{
 				for (int d = 0; d < 2; d++)

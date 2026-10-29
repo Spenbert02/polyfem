@@ -8,12 +8,12 @@ namespace polyfem::assembler
 	{
 	}
 
-	void ActinFiber::add_multimaterial(const int index, const json &params, const Units &units, const std::string &root_path)
+	void ActinFiber::add_multimaterial(const int index, const json &params, const Units &units, const io::ResourceIO &resources)
 	{
-		GenericFiber::add_multimaterial(index, params, units, root_path);
+		GenericFiber::add_multimaterial(index, params, units, resources);
 
-		Tmax_.add_multimaterial(index, params, units.stress(), root_path);
-		activation_.add_multimaterial(index, params, "", root_path);
+		Tmax_.add_multimaterial(index, params, units.stress(), resources);
+		activation_.add_multimaterial(index, params, "", resources);
 	}
 
 	double ActinFiber::cached_activation(const RowVectorNd &p, double t, int el_id) const

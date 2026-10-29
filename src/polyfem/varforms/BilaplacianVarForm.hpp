@@ -3,6 +3,7 @@
 #include <polyfem/varforms/VarForm.hpp>
 
 #include <polyfem/assembler/Assembler.hpp>
+#include <polyfem/assembler/Mass.hpp>
 #include <polyfem/assembler/RhsAssembler.hpp>
 
 namespace polysolve::linear
@@ -17,6 +18,7 @@ namespace polyfem::varform
 		friend class polyfem::test::VarFormTestAccess;
 
 	public:
+		using VarForm::VarForm;
 		std::string name() const override { return "Bilaplacian"; }
 
 		void init(const std::string &formulation, const Units &units, const json &args, const std::string &out_path) override;
@@ -24,6 +26,8 @@ namespace polyfem::varform
 		void export_data(const Eigen::MatrixXd &solution) const override;
 		io::OutputSpace output_space() const override;
 		io::OutStatsData compute_errors(const Eigen::MatrixXd &solution) override;
+		void serialize_checkpoint(io::CheckpointWriter &writer, const Eigen::MatrixXd &solution, const io::CheckpointMetadata &metadata) const override;
+		void deserialize_checkpoint(const io::CheckpointReader &reader, Eigen::MatrixXd &solution) override;
 
 		std::vector<io::OutputField> output_fields(
 			const io::OutputSample &sample,
@@ -36,7 +40,10 @@ namespace polyfem::varform
 		void build_basis(mesh::Mesh &mesh, const bool iso_parametric, const json &args) override;
 		void assemble_rhs(const mesh::Mesh &mesh) override;
 		void assemble_mass_mat(const mesh::Mesh &mesh, const json &args) override;
-		void solve_problem(Eigen::MatrixXd &sol) override;
+		void solve_problem(
+			Eigen::MatrixXd &sol,
+			const InitialConditionOverride *initial_condition_override,
+			const ForwardStepCallback &post_step) override;
 
 		int stacked_ndof() const;
 		void prepare_initial_solution(Eigen::MatrixXd &sol) const;

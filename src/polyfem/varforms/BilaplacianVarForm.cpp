@@ -23,6 +23,28 @@ namespace polyfem::varform
 {
 	using namespace varform::internal;
 
+	void BilaplacianVarForm::serialize_checkpoint(
+		io::CheckpointWriter &writer,
+		const Eigen::MatrixXd &solution,
+		const io::CheckpointMetadata &metadata) const
+	{
+		VarForm::serialize_checkpoint(writer, solution, metadata);
+		write_checkpoint_ordering(writer, "primary", space_);
+		write_checkpoint_ordering(writer, "pressure", pressure_space_);
+	}
+
+	void BilaplacianVarForm::deserialize_checkpoint(
+		const io::CheckpointReader &reader,
+		Eigen::MatrixXd &solution)
+	{
+		VarForm::deserialize_checkpoint(reader, solution);
+		validate_checkpoint_solution(solution, stacked_ndof());
+		reorder_checkpoint_block(reader, "primary", space_, 1, 0, solution);
+		reorder_checkpoint_block(
+			reader, "pressure", pressure_space_,
+			1, space_.n_bases, solution);
+	}
+
 	void BilaplacianVarForm::reset()
 	{
 		VarForm::reset();
@@ -103,19 +125,18 @@ namespace polyfem::varform
 			problem->clear();
 			json tmp;
 			tmp["is_time_dependent"] = is_time_dependent;
-			problem->set_parameters(tmp, root_path);
+			problem->set_parameters(tmp, resources_);
 
 			auto bc = args["boundary_conditions"];
-			bc["root_path"] = root_path;
-			problem->set_parameters(bc, root_path);
-			problem->set_parameters(args["initial_conditions"], root_path);
-			problem->set_parameters(args["output"], root_path);
+			problem->set_parameters(bc, resources_);
+			problem->set_parameters(args["initial_conditions"], resources_);
+			problem->set_parameters(args["output"], resources_);
 		}
 		else
 		{
 			problem = problem::ProblemFactory::factory().get_problem(args["preset_problem"]["type"]);
 			problem->clear();
-			problem->set_parameters(args["preset_problem"], root_path);
+			problem->set_parameters(args["preset_problem"], resources_);
 		}
 
 		problem->set_units(*primary_assembler_, units);
@@ -306,7 +327,7 @@ namespace polyfem::varform
 			*primary_assembler_, *mesh_, nullptr,
 			boundary_.dirichlet_nodes, boundary_.neumann_nodes,
 			boundary_.dirichlet_nodes_position, boundary_.neumann_nodes_position,
-			n_bases, 1, bases, space_.geometry_basis_list(), ass_vals_cache, *problem,
+			n_bases, 1, bases, space_.geometry_basis_list(), ass_vals_cache, *problem, resources_,
 			args["space"]["advanced"]["bc_method"],
 			rhs_solver_params,
 			fe_space_id);
@@ -319,8 +340,8 @@ namespace polyfem::varform
 		assert(mass_assembler_);
 		assert(pure_mass_assembler_);
 
-		Eigen::VectorXi space_disc_orders;
-		assign_discr_orders(args["space"]["discr_order"], solution_space_id_, mesh, space_disc_orders);
+		Eigen::VectorXi space_disc_orders, space_disc_ordersq;
+		assign_discr_orders(args["space"], solution_space_id_, mesh, space_disc_orders, space_disc_ordersq);
 
 		if (args["space"]["use_p_ref"])
 		{
@@ -340,6 +361,7 @@ namespace polyfem::varform
 			mesh,
 			iso_parametric,
 			space_disc_orders,
+			space_disc_ordersq,
 			args["space"]["basis_type"],
 			args["space"]["poly_basis_type"],
 			*primary_assembler_,
@@ -392,14 +414,15 @@ namespace polyfem::varform
 		const bool use_corner_quadrature = args["space"]["advanced"]["use_corner_quadrature"];
 		const int quadrature_order = args["space"]["advanced"]["quadrature_order"].get<int>();
 		const int mass_quadrature_order = args["space"]["advanced"]["mass_quadrature_order"].get<int>();
-		Eigen::VectorXi pressure_disc_orders;
-		assign_discr_orders(args["space"]["discr_order"], auxiliary_space_id_, mesh, pressure_disc_orders);
+		Eigen::VectorXi pressure_disc_orders, pressure_disc_ordersq;
+		assign_discr_orders(args["space"], auxiliary_space_id_, mesh, pressure_disc_orders, pressure_disc_ordersq);
 		// to avoid serendipity
 		const std::string pressure_basis_type = args["space"]["basis_type"].get<std::string>() == "Bernstein" ? "Bernstein" : "Lagrange";
 		build_fe_space(
 			mesh,
 			/*iso_parametric=*/true,
 			pressure_disc_orders,
+			pressure_disc_ordersq,
 			pressure_basis_type,
 			args["space"]["poly_basis_type"],
 			*primary_assembler_,
@@ -462,7 +485,6 @@ namespace polyfem::varform
 		igl::Timer timer;
 		json p_params = {};
 		p_params["formulation"] = primary_assembler_->name();
-		p_params["root_path"] = root_path;
 		{
 			RowVectorNd min, max, delta;
 			mesh.bounding_box(min, max);
@@ -472,7 +494,7 @@ namespace polyfem::varform
 			else
 				p_params["bbox_center"] = {delta(0), delta(1)};
 		}
-		problem->set_parameters(p_params, root_path);
+		problem->set_parameters(p_params, resources_);
 
 		rhs_.resize(0, 0);
 
@@ -498,7 +520,7 @@ namespace polyfem::varform
 			Eigen::MatrixXd tmp = Eigen::MatrixXd::Zero(pressure_space_.n_bases, 1);
 			auto tmp_rhs_assembler = build_rhs_assembler(pressure_space_.n_bases, pressure_space_.basis_list(), pressure_ass_vals_cache_, auxiliary_space_id_);
 			const int gdiscr_order = mesh_->orders().size() <= 0 ? 1 : mesh_->orders().maxCoeff();
-			const QuadratureOrders boundary_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), gdiscr_order);
+			const QuadratureOrders boundary_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), space_.disc_ordersq.maxCoeff(), gdiscr_order);
 			tmp_rhs_assembler->set_bc(
 				std::vector<mesh::LocalBoundary>(), std::vector<int>(), boundary_samples, boundary_.local_neumann_boundary, tmp);
 			rhs_.bottomRows(pressure_space_.n_bases) = tmp;
@@ -547,20 +569,12 @@ namespace polyfem::varform
 		if (sol.size() <= 0)
 		{
 			assert(rhs_assembler_ != nullptr);
-			const bool was_solution_loaded = read_initial_x_from_file(
-				resolve_input_path(args["input"]["data"]["state"]), "u",
-				args["input"]["data"]["reorder"], space_.space_in_node_to_node,
-				/*dim=*/1, sol);
-
-			if (!was_solution_loaded)
+			if (problem->is_time_dependent())
+				rhs_assembler_->initial_solution(sol);
+			else
 			{
-				if (problem->is_time_dependent())
-					rhs_assembler_->initial_solution(sol);
-				else
-				{
-					sol.resize(rhs_.size(), 1);
-					sol.setZero();
-				}
+				sol.resize(rhs_.size(), 1);
+				sol.setZero();
 			}
 		}
 		if (sol.cols() > 1)
@@ -637,7 +651,7 @@ namespace polyfem::varform
 		auto solver = polysolve::linear::Solver::create(args["solver"]["linear"], logger());
 		logger().info("{}...", solver->name());
 		const int gdiscr_order = mesh_->orders().size() <= 0 ? 1 : mesh_->orders().maxCoeff();
-		const QuadratureOrders boundary_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), gdiscr_order);
+		const QuadratureOrders boundary_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), space_.disc_ordersq.maxCoeff(), gdiscr_order);
 		rhs_assembler_->set_bc(
 			boundary_.local_boundary, boundary_.boundary_nodes, boundary_samples,
 			(primary_assembler_->name() != "Bilaplacian") ? boundary_.local_neumann_boundary : std::vector<mesh::LocalBoundary>(), rhs_);
@@ -662,6 +676,9 @@ namespace polyfem::varform
 			Eigen::MatrixXd::Zero(value.rows(), value.cols()),
 			dt);
 		time_integrator = bdf;
+		restore_checkpoint_integrator(
+			time_integrator, "/checkpoint/state/primary_integrator", dt,
+			"primary", space_, 1);
 
 		save_timestep(t0, 0, t0, dt, sol);
 
@@ -670,7 +687,7 @@ namespace polyfem::varform
 		build_stiffness_mat(stiffness);
 		expand_primary_matrix(stacked_ndof(), mass_, expanded_mass);
 		const int gdiscr_order = mesh_->orders().size() <= 0 ? 1 : mesh_->orders().maxCoeff();
-		const QuadratureOrders boundary_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), gdiscr_order);
+		const QuadratureOrders boundary_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), space_.disc_ordersq.maxCoeff(), gdiscr_order);
 
 		for (int t = 1; t <= time_steps; ++t)
 		{
@@ -702,14 +719,20 @@ namespace polyfem::varform
 			bdf->update_quantities(value.col(0));
 
 			save_timestep(time, t, t0, dt, sol);
-			save_step_state(t0, dt, t, time_integrator.get());
+			save_step_state(t0, dt, t, sol, time_integrator.get());
 			logger().info("{}/{}  t={}", t, time_steps, time);
 			notify_time_step(t, time_steps, t0, dt);
 		}
 	}
 
-	void BilaplacianVarForm::solve_problem(Eigen::MatrixXd &sol)
+	void BilaplacianVarForm::solve_problem(
+		Eigen::MatrixXd &sol,
+		const InitialConditionOverride *initial_condition_override,
+		const ForwardStepCallback &post_step)
 	{
+		assert(!initial_condition_override && "Bilaplacian does not support initial-condition overrides");
+		assert(!post_step && "Bilaplacian does not support post-step callbacks");
+
 		stats.spectrum.setZero();
 		igl::Timer timer;
 		timer.start();

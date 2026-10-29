@@ -2,6 +2,8 @@
 
 #include <polyfem/varforms/VarForm.hpp>
 
+#include <polyfem/assembler/Mass.hpp>
+
 namespace polyfem::mesh
 {
 	class Obstacle;
@@ -23,14 +25,18 @@ namespace polyfem::varform
 	class ElasticVarForm : public VarForm
 	{
 		friend class polyfem::test::VarFormTestAccess;
+		friend class NavierStokesFSIVarForm;
 
 	public:
+		using VarForm::VarForm;
 		void init(const std::string &formulation, const Units &units, const json &args, const std::string &out_path) override;
 
 		void save_json(const Eigen::MatrixXd &solution, std::ostream &out) const override;
 		void export_data(const Eigen::MatrixXd &solution) const override;
 		io::OutputSpace output_space() const override;
 		io::OutStatsData compute_errors(const Eigen::MatrixXd &solution) override;
+		void serialize_checkpoint(io::CheckpointWriter &writer, const Eigen::MatrixXd &solution, const io::CheckpointMetadata &metadata) const override;
+		void deserialize_checkpoint(const io::CheckpointReader &reader, Eigen::MatrixXd &solution) override;
 
 	protected:
 		void reset() override;
@@ -41,9 +47,18 @@ namespace polyfem::varform
 		void assemble_mass_mat(const mesh::Mesh &mesh, const json &args) override;
 		void build_rhs_assembler() override;
 
-		void initial_velocity(Eigen::MatrixXd &velocity) const;
-		void initial_acceleration(Eigen::MatrixXd &acceleration) const;
-		void initial_elastic_solution(Eigen::MatrixXd &solution) const;
+		void initial_solution(
+			Eigen::MatrixXd &solution,
+			const InitialConditionOverride *override = nullptr,
+			const std::string &state_prefix = "") const;
+		void initial_velocity(
+			Eigen::MatrixXd &velocity,
+			const InitialConditionOverride *override = nullptr,
+			const std::string &state_prefix = "") const;
+		void initial_acceleration(
+			Eigen::MatrixXd &acceleration,
+			const InitialConditionOverride *override = nullptr,
+			const std::string &state_prefix = "") const;
 		QuadratureOrders elastic_boundary_samples() const;
 		std::vector<int> elastic_primitive_to_node() const;
 		std::vector<int> elastic_node_to_primitive() const;
@@ -52,6 +67,7 @@ namespace polyfem::varform
 			const double t0,
 			const double dt,
 			const int t,
+			const Eigen::MatrixXd &solution,
 			const time_integrator::ImplicitTimeIntegrator *time_integrator) const;
 		std::vector<io::OutputField> elastic_output_fields(
 			const io::OutputSample &sample,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <polyfem/Units.hpp>
+#include <polyfem/io/ResourceIO.hpp>
 
 #include <polyfem/assembler/AssemblerData.hpp>
 #include <polyfem/assembler/AssemblyValsCache.hpp>
@@ -188,8 +189,8 @@ namespace polyfem::assembler
 
 		virtual Eigen::Matrix<AutodiffScalarGrad, Eigen::Dynamic, 1, 0, 3, 1> kernel(const int dim, const AutodiffGradPt &rvect, const AutodiffScalarGrad &r) const { log_and_throw_error("Kernel not supported by {}!", name()); }
 
-		void set_materials(const std::vector<int> &body_ids, const json &body_params, const Units &units, const std::string &root_path);
-		virtual void add_multimaterial(const int index, const json &params, const Units &units, const std::string &root_path) {}
+		void set_materials(const std::vector<int> &body_ids, const json &body_params, const Units &units, const io::ResourceIO &resources);
+		virtual void add_multimaterial(const int index, const json &params, const Units &units, const io::ResourceIO &resources) {}
 
 		virtual void update_lame_params(const Eigen::MatrixXd &lambdas, const Eigen::MatrixXd &mus)
 		{
@@ -293,6 +294,27 @@ namespace polyfem::assembler
 		virtual double compute_energy(const MixedNonLinearAssemblerData &data) const = 0;
 		virtual Eigen::VectorXd compute_gradient(const MixedNonLinearAssemblerData &data) const = 0;
 		virtual Eigen::MatrixXd compute_hessian(const MixedNonLinearAssemblerData &data) const = 0;
+	};
+
+	/// Local nonlinear assembler for an arbitrary number of FE spaces. Unlike
+	/// NLAssembler and MixedNLAssembler, this class never performs global assembly.
+	/// The owning form is responsible for element traversal and gather/scatter.
+	class MultiSpacesNLAssembler : virtual public Assembler
+	{
+	public:
+		using Assembler::assemble_gradient;
+		using Assembler::assemble_hessian;
+
+		virtual ~MultiSpacesNLAssembler() = default;
+
+		virtual double compute_energy(const MultiSpacesNLAssemblerData &data) const = 0;
+		virtual Eigen::VectorXd assemble_gradient(const MultiSpacesNLAssemblerData &data) const = 0;
+		virtual Eigen::MatrixXd assemble_hessian(
+			const MultiSpacesNLAssemblerData &data,
+			int row_space,
+			int col_space) const = 0;
+
+		bool is_linear() const override { return false; }
 	};
 
 	/// assemble matrix based on the local assembler

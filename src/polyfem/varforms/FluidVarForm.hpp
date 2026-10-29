@@ -3,6 +3,7 @@
 #include <polyfem/varforms/VarForm.hpp>
 
 #include <polyfem/assembler/Assembler.hpp>
+#include <polyfem/assembler/Mass.hpp>
 #include <polyfem/assembler/RhsAssembler.hpp>
 
 namespace polysolve::linear
@@ -30,11 +31,14 @@ namespace polyfem::varform
 		friend class polyfem::test::VarFormTestAccess;
 
 	public:
+		using VarForm::VarForm;
 		void init(const std::string &formulation, const Units &units, const json &args, const std::string &out_path) override;
 		void save_json(const Eigen::MatrixXd &solution, std::ostream &out) const override;
 		void export_data(const Eigen::MatrixXd &solution) const override;
 		io::OutputSpace output_space() const override;
 		io::OutStatsData compute_errors(const Eigen::MatrixXd &solution) override;
+		void serialize_checkpoint(io::CheckpointWriter &writer, const Eigen::MatrixXd &solution, const io::CheckpointMetadata &metadata) const override;
+		void deserialize_checkpoint(const io::CheckpointReader &reader, Eigen::MatrixXd &solution) override;
 
 		std::vector<io::OutputField> output_fields(
 			const io::OutputSample &sample,
@@ -100,10 +104,14 @@ namespace polyfem::varform
 	class StokesVarForm : public FluidVarForm
 	{
 	public:
+		using FluidVarForm::FluidVarForm;
 		std::string name() const override { return "Stokes"; }
 
 	private:
-		void solve_problem(Eigen::MatrixXd &sol) override;
+		void solve_problem(
+			Eigen::MatrixXd &sol,
+			const InitialConditionOverride *initial_condition_override,
+			const ForwardStepCallback &post_step) override;
 		void solve_static_linear(Eigen::MatrixXd &sol);
 		void solve_transient_linear(Eigen::MatrixXd &sol);
 	};
@@ -111,10 +119,14 @@ namespace polyfem::varform
 	class NavierStokesVarForm : public FluidVarForm
 	{
 	public:
+		using FluidVarForm::FluidVarForm;
 		std::string name() const override { return "NavierStokes"; }
 
 	private:
-		void solve_problem(Eigen::MatrixXd &sol) override;
+		void solve_problem(
+			Eigen::MatrixXd &sol,
+			const InitialConditionOverride *initial_condition_override,
+			const ForwardStepCallback &post_step) override;
 		void build_forms(Eigen::MatrixXd &sol, double t);
 		void solve_nonlinear_step(int step, Eigen::MatrixXd &sol);
 		void update_transient_form_weights();

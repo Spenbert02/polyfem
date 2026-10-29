@@ -9,7 +9,14 @@
 #include <polyfem/problem/ProblemFactory.hpp>
 #include <polyfem/refinement/APriori.hpp>
 
+#include <polyfem/solver/NLProblem.hpp>
+#include <polyfem/solver/forms/lagrangian/BCLagrangianForm.hpp>
+#include <polyfem/solver/forms/lagrangian/MatrixLagrangianForm.hpp>
+#include <polyfem/solver/forms/lagrangian/PeriodicBoundaryLagrangianForm.hpp>
+
 #include <polyfem/time_integrator/BDF.hpp>
+#include <polyfem/solver/forms/BodyForm.hpp>
+#include <polyfem/solver/forms/ElasticForm.hpp>
 #include <polyfem/utils/Jacobian.hpp>
 #include <polyfem/utils/Logger.hpp>
 #include <polyfem/utils/MatrixUtils.hpp>
@@ -33,6 +40,24 @@ namespace polyfem::varform
 		}
 	} // namespace
 
+	void ScalarVarForm::serialize_checkpoint(
+		io::CheckpointWriter &writer,
+		const Eigen::MatrixXd &solution,
+		const io::CheckpointMetadata &metadata) const
+	{
+		VarForm::serialize_checkpoint(writer, solution, metadata);
+		write_checkpoint_ordering(writer, "primary", space_);
+	}
+
+	void ScalarVarForm::deserialize_checkpoint(
+		const io::CheckpointReader &reader,
+		Eigen::MatrixXd &solution)
+	{
+		VarForm::deserialize_checkpoint(reader, solution);
+		validate_checkpoint_solution(solution, space_.ndof());
+		reorder_checkpoint_block(reader, "primary", space_, 1, 0, solution);
+	}
+
 	void ScalarVarForm::reset()
 	{
 		VarForm::reset();
@@ -53,6 +78,7 @@ namespace polyfem::varform
 		time_steps = 0;
 		dt = 0;
 		time_integrator = nullptr;
+		solve_data_ = solver::SolveData();
 	}
 
 	void ScalarVarForm::init(const std::string &formulation, const Units &units, const json &args, const std::string &out_path)
@@ -74,19 +100,18 @@ namespace polyfem::varform
 
 			json tmp;
 			tmp["is_time_dependent"] = is_time_dependent;
-			problem->set_parameters(tmp, root_path);
+			problem->set_parameters(tmp, resources_);
 
 			auto bc = args["boundary_conditions"];
-			bc["root_path"] = root_path;
-			problem->set_parameters(bc, root_path);
-			problem->set_parameters(args["initial_conditions"], root_path);
-			problem->set_parameters(args["output"], root_path);
+			problem->set_parameters(bc, resources_);
+			problem->set_parameters(args["initial_conditions"], resources_);
+			problem->set_parameters(args["output"], resources_);
 		}
 		else
 		{
 			problem = problem::ProblemFactory::factory().get_problem(args["preset_problem"]["type"]);
 			problem->clear();
-			problem->set_parameters(args["preset_problem"], root_path);
+			problem->set_parameters(args["preset_problem"], resources_);
 		}
 
 		problem->set_units(*primary_assembler_, units);
@@ -112,8 +137,8 @@ namespace polyfem::varform
 		assert(mass_assembler_);
 		assert(pure_mass_assembler_);
 
-		Eigen::VectorXi space_disc_orders;
-		assign_discr_orders(args["space"]["discr_order"], mesh, space_disc_orders);
+		Eigen::VectorXi space_disc_orders, space_disc_ordersq;
+		assign_discr_orders(args["space"], mesh, space_disc_orders, space_disc_ordersq);
 
 		if (args["space"]["use_p_ref"])
 		{
@@ -133,6 +158,7 @@ namespace polyfem::varform
 			mesh,
 			iso_parametric,
 			space_disc_orders,
+			space_disc_ordersq,
 			args["space"]["basis_type"],
 			args["space"]["poly_basis_type"],
 			*primary_assembler_,
@@ -234,10 +260,11 @@ namespace polyfem::varform
 			*primary_assembler_, *mesh_, nullptr,
 			boundary_.dirichlet_nodes, boundary_.neumann_nodes,
 			boundary_.dirichlet_nodes_position, boundary_.neumann_nodes_position,
-			space_.n_bases, /*size=*/1, space_.basis_list(), space_.geometry_basis_list(), mass_ass_vals_cache_, *problem,
+			space_.n_bases, /*size=*/1, space_.basis_list(), space_.geometry_basis_list(), mass_ass_vals_cache_, *problem, resources_,
 			args["space"]["advanced"]["bc_method"],
 			rhs_solver_params,
 			/*fe_space_id=*/-1);
+		solve_data_.rhs_assembler = rhs_assembler_;
 	}
 
 	void ScalarVarForm::assemble_rhs(const mesh::Mesh &mesh)
@@ -245,7 +272,6 @@ namespace polyfem::varform
 		igl::Timer timer;
 		json p_params = {};
 		p_params["formulation"] = primary_assembler_->name();
-		p_params["root_path"] = root_path;
 		{
 			RowVectorNd min, max, delta;
 			mesh.bounding_box(min, max);
@@ -255,7 +281,7 @@ namespace polyfem::varform
 			else
 				p_params["bbox_center"] = {delta(0), delta(1)};
 		}
-		problem->set_parameters(p_params, root_path);
+		problem->set_parameters(p_params, resources_);
 
 		rhs_.resize(0, 0);
 
@@ -318,22 +344,15 @@ namespace polyfem::varform
 
 	void ScalarVarForm::prepare_initial_solution(Eigen::MatrixXd &solution) const
 	{
+		if (solution.size() > 0)
+			return;
 		assert(rhs_assembler_ != nullptr);
-
-		const bool was_solution_loaded = read_initial_x_from_file(
-			resolve_input_path(args["input"]["data"]["state"]), "u",
-			args["input"]["data"]["reorder"], space_.space_in_node_to_node,
-			/*dim=*/1, solution);
-
-		if (!was_solution_loaded)
+		if (problem->is_time_dependent())
+			rhs_assembler_->initial_solution(solution);
+		else
 		{
-			if (problem->is_time_dependent())
-				rhs_assembler_->initial_solution(solution);
-			else
-			{
-				solution.resize(rhs_.size(), 1);
-				solution.setZero();
-			}
+			solution.resize(rhs_.size(), 1);
+			solution.setZero();
 		}
 	}
 
@@ -716,13 +735,126 @@ namespace polyfem::varform
 			logger().debug("Solver error: {}", error);
 	}
 
-	void ScalarVarForm::solve_static(Eigen::MatrixXd &sol)
+	void ScalarVarForm::solve_linear_system_with_constraints(
+		const std::unique_ptr<polysolve::linear::Solver> &solver,
+		StiffnessMatrix &A,
+		Eigen::VectorXd &b,
+		const bool compute_spectrum,
+		const QuadratureOrders &boundary_samples,
+		const double time,
+		Eigen::MatrixXd &sol)
+	{
+		const json &periodic_conditions = args["boundary_conditions"]["periodic"];
+		const json &zero_mean = args["constraints"]["zero_mean"];
+		const bool add_zero_mean =
+			zero_mean.is_boolean()
+				? zero_mean.get<bool>()
+				: (zero_mean.is_array()
+				   && std::find(zero_mean.begin(), zero_mean.end(), 0) != zero_mean.end());
+		const bool has_global_constraints = !periodic_conditions.empty() || add_zero_mean;
+
+		if (!has_global_constraints)
+		{
+			solve_linear_system(solver, A, b, compute_spectrum, sol);
+			return;
+		}
+
+		if (!zero_mean.is_boolean() && !zero_mean.is_array())
+			log_and_throw_error("constraints.zero_mean must be a boolean or a list of FE-space IDs");
+
+		StiffnessMatrix constraint_mass = mass_;
+		if (constraint_mass.rows() != A.rows() || constraint_mass.cols() != A.cols())
+		{
+			mass_assembler_->assemble(
+				mesh_->is_volume(), space_.n_bases, space_.basis_list(), space_.geometry_basis_list(),
+				mass_ass_vals_cache_, 0, constraint_mass, true);
+		}
+		if (constraint_mass.rows() != A.rows() || constraint_mass.cols() != A.cols())
+			log_and_throw_error("Unable to assemble scalar constraint mass matrix for {} DoFs", A.rows());
+
+		std::vector<std::shared_ptr<solver::AugmentedLagrangianForm>> constraint_forms;
+		if (!boundary_.boundary_nodes.empty())
+		{
+			constraint_forms.push_back(std::make_shared<solver::BCLagrangianForm>(
+				A.rows(), boundary_.boundary_nodes, boundary_.local_boundary,
+				boundary_.local_neumann_boundary, boundary_samples, constraint_mass,
+				*rhs_assembler_, /*obstacle_ndof=*/0, problem->is_time_dependent(), time));
+		}
+
+		for (const json &condition : periodic_conditions)
+		{
+			const int fe_space = condition.value("fe_space", -1);
+			if (fe_space >= 0 && fe_space != 0)
+				continue;
+
+			const std::array<int, 2> boundary_ids = {{condition["boundary_ids"][0].get<int>(),
+													  condition["boundary_ids"][1].get<int>()}};
+			constraint_forms.push_back(std::make_shared<solver::PeriodicBoundaryLagrangianForm>(
+				A.rows(), /*value_dim=*/1, *mesh_, space_.basis_list(),
+				boundary_.total_local_boundary, boundary_ids,
+				condition.value("tolerance", 1e-5)));
+		}
+
+		if (add_zero_mean)
+		{
+			const Eigen::VectorXd weights = constraint_mass * Eigen::VectorXd::Ones(A.rows());
+			const double weight_sum = weights.cwiseAbs().sum();
+			if (weight_sum <= 0)
+				log_and_throw_error("Unable to assemble a scalar zero-mean constraint");
+
+			std::vector<Eigen::Triplet<double>> entries;
+			entries.reserve(weights.size());
+			for (int dof = 0; dof < weights.size(); ++dof)
+				if (weights(dof) != 0)
+					entries.emplace_back(0, dof, weights(dof) / weight_sum);
+
+			StiffnessMatrix C(1, A.rows());
+			C.setFromTriplets(entries.begin(), entries.end());
+			constraint_forms.push_back(std::make_shared<solver::MatrixLagrangianForm>(
+				C, Eigen::MatrixXd::Zero(1, 1)));
+		}
+
+		if (constraint_forms.empty())
+		{
+			solve_linear_system(solver, A, b, compute_spectrum, sol);
+			return;
+		}
+
+		auto constraint_solver = polysolve::linear::Solver::create(args["solver"]["linear"], logger());
+		std::shared_ptr<polysolve::linear::Solver> shared_constraint_solver(std::move(constraint_solver));
+		solver::NLProblem constrained_problem(
+			A.rows(), time, {}, constraint_forms, shared_constraint_solver,
+			/*char_length=*/1, /*char_force=*/1, constraint_mass, /*dimension=*/1);
+
+		const StiffnessMatrix full_A = A;
+		const Eigen::VectorXd affine_offset =
+			constrained_problem.reduced_to_full(Eigen::VectorXd::Zero(constrained_problem.reduced_size()));
+		b = constrained_problem.full_to_reduced_grad(b - full_A * affine_offset);
+		constrained_problem.full_hessian_to_reduced_hessian(A);
+
+		Eigen::VectorXd reduced_solution;
+		stats.spectrum = dirichlet_solve(
+			*solver, A, b, {}, reduced_solution, A.rows(),
+			args["output"]["data"]["stiffness_mat"],
+			compute_spectrum,
+			/*is_problem_mixed=*/false, /*use_avg_pressure=*/false);
+		sol = constrained_problem.reduced_to_full(reduced_solution);
+		solver->get_info(stats.solver_info);
+
+		const double error = (A * reduced_solution - b).norm();
+		if (error > 1e-4)
+			logger().error("Solver error: {}", error);
+		else
+			logger().debug("Solver error: {}", error);
+	}
+
+	void ScalarVarForm::solve_static(Eigen::MatrixXd &sol, const ForwardStepCallback &post_step)
 	{
 		auto solver = polysolve::linear::Solver::create(args["solver"]["linear"], logger());
 		logger().info("{}...", solver->name());
 
 		const int gdiscr_order = mesh_->orders().size() <= 0 ? 1 : mesh_->orders().maxCoeff();
-		const QuadratureOrders boundary_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), gdiscr_order);
+		const QuadratureOrders boundary_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), space_.disc_ordersq.maxCoeff(), gdiscr_order);
 
 		rhs_assembler_->set_bc(
 			boundary_.local_boundary, boundary_.boundary_nodes, boundary_samples,
@@ -732,10 +864,29 @@ namespace polyfem::varform
 		build_stiffness_mat(A);
 
 		Eigen::VectorXd b = rhs_;
-		solve_linear_system(solver, A, b, args["output"]["advanced"]["spectrum"], sol);
+		solve_linear_system_with_constraints(
+			solver, A, b, args["output"]["advanced"]["spectrum"],
+			boundary_samples, /*time=*/1, sol);
+
+		// Static scalar solves do not use solver forms, but the current adjoint
+		// implementation requires them through SolveData to compute force derivatives.
+		// TODO: Remove this hack
+		solve_data_.elastic_form = std::make_shared<solver::ElasticForm>(
+			space_.n_bases, *space_.bases, space_.geometry_basis_list(),
+			*primary_assembler_, ass_vals_cache_, 0, 0, mesh_->is_volume(),
+			args["solver"]["advanced"]["jacobian_threshold"],
+			args["solver"]["advanced"]["check_inversion"],
+			args["solver"]["advanced"]["conservative_max_iter"]);
+		solve_data_.body_form = std::make_shared<solver::BodyForm>(
+			space_.ndof(), 0, boundary_.boundary_nodes, boundary_.local_boundary,
+			boundary_.local_neumann_boundary, boundary_samples, rhs_, *rhs_assembler_,
+			mass_assembler_->density(), false, false);
+		solve_data_.body_form->update_quantities(0, sol);
+		if (post_step)
+			post_step(0, sol);
 	}
 
-	void ScalarVarForm::solve_transient(Eigen::MatrixXd &sol)
+	void ScalarVarForm::solve_transient(Eigen::MatrixXd &sol, const ForwardStepCallback &post_step)
 	{
 		assert(problem->is_time_dependent());
 		assert(rhs_assembler_ != nullptr);
@@ -747,8 +898,13 @@ namespace polyfem::varform
 			args["time"]["integrator"]);
 		bdf->init(sol, Eigen::VectorXd::Zero(sol.size()), Eigen::VectorXd::Zero(sol.size()), dt);
 		time_integrator = bdf;
+		restore_checkpoint_integrator(
+			time_integrator, "/checkpoint/state/primary_integrator", dt,
+			"primary", space_, 1);
 
 		save_timestep(t0, 0, t0, dt, sol);
+		if (post_step)
+			post_step(0, sol);
 
 		Eigen::MatrixXd current_rhs = rhs_;
 
@@ -756,7 +912,7 @@ namespace polyfem::varform
 		build_stiffness_mat(stiffness);
 
 		const int gdiscr_order = mesh_->orders().size() <= 0 ? 1 : mesh_->orders().maxCoeff();
-		const QuadratureOrders n_b_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), gdiscr_order);
+		const QuadratureOrders n_b_samples = n_boundary_samples(space_.disc_orders.maxCoeff(), space_.disc_ordersq.maxCoeff(), gdiscr_order);
 		for (int t = 1; t <= time_steps; ++t)
 		{
 			const double time = t0 + t * dt;
@@ -774,19 +930,33 @@ namespace polyfem::varform
 				b[i] = 0;
 			b += current_rhs;
 
-			solve_linear_system(solver, A, b, args["output"]["advanced"]["spectrum"].get<bool>() && t == time_steps, sol);
+			solve_linear_system_with_constraints(
+				solver, A, b,
+				args["output"]["advanced"]["spectrum"].get<bool>() && t == time_steps,
+				n_b_samples, time, sol);
+			if (post_step)
+				post_step(t, sol);
 
 			bdf->update_quantities(sol);
 			save_timestep(time, t, t0, dt, sol);
-			save_step_state(t0, dt, t, time_integrator.get());
+			save_step_state(t0, dt, t, sol, time_integrator.get());
 
 			logger().info("{}/{}  t={}", t, time_steps, time);
 			notify_time_step(t, time_steps, t0, dt);
 		}
 	}
 
-	void ScalarVarForm::solve_problem(Eigen::MatrixXd &sol)
+	void ScalarVarForm::solve_problem(
+		Eigen::MatrixXd &sol,
+		const InitialConditionOverride *initial_condition_override,
+		const ForwardStepCallback &post_step)
 	{
+		assert(
+			(!initial_condition_override
+			 || (initial_condition_override->velocity.size() == 0
+				 && initial_condition_override->acceleration.size() == 0))
+			&& "Scalar formulations do not accept initial velocity or acceleration overrides");
+
 		stats.spectrum.setZero();
 
 		igl::Timer timer;
@@ -796,7 +966,14 @@ namespace polyfem::varform
 		{
 			POLYFEM_SCOPED_TIMER("Setup RHS");
 
-			if (sol.size() <= 0)
+			if (initial_condition_override && initial_condition_override->solution.size() != 0)
+			{
+				sol = initial_condition_override->solution;
+				assert(
+					sol.rows() == space_.ndof() && sol.cols() == 1
+					&& "Scalar initial solution override must match the simulation DOFs and have one column");
+			}
+			else if (sol.size() <= 0)
 				prepare_initial_solution(sol);
 
 			if (sol.cols() > 1)
@@ -805,9 +982,9 @@ namespace polyfem::varform
 
 		time_integrator = nullptr;
 		if (problem->is_time_dependent())
-			solve_transient(sol);
+			solve_transient(sol, post_step);
 		else
-			solve_static(sol);
+			solve_static(sol, post_step);
 
 		timer.stop();
 		timings.solving_time = timer.getElapsedTime();

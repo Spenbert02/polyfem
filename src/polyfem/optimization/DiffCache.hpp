@@ -1,7 +1,7 @@
 #pragma once
 
 #include <polyfem/Common.hpp>
-#include <polyfem/legacy/State.hpp>
+#include <polyfem/varforms/diff/DifferentiableVarForm.hpp>
 
 #include <polyfem/utils/Types.hpp>
 
@@ -12,6 +12,7 @@
 #include <Eigen/Core>
 
 #include <cassert>
+#include <optional>
 #include <vector>
 
 namespace polyfem
@@ -21,23 +22,21 @@ namespace polyfem
 	{
 	public:
 		/// Initial-condition override storage for initial condition optimization.
-		legacy::InitialConditionOverride initial_condition_override;
+		std::optional<varform::InitialConditionOverride> initial_condition_override;
 
 		void cache_adjoints(const Eigen::MatrixXd &adjoint_mat);
 
 		/// @brief Cache time-dependent adjoint optimization data.
 		/// @param[in] step Current time step.
-		/// @param[in] state Current forward simulation state. Will mutate it to get latest value.
+		/// @param[in] varform Current forward simulation varform. Will mutate it to get latest value.
 		/// @param[in] sol Current solution.
-		/// @param[in] disp_grad Pointer to displacement gradient matrix. Assumes zero if nullptr.
 		/// @param[in] pressure Pointer to pressure matrix. PASS nullptr ONLY.
 		///
 		/// @warning We DO NOT support navier stoke problem yet!! Passing non-null pressure triggers exception.
 		void cache_transient(
 			int step,
-			legacy::State &state,
+			varform::DifferentiableVarForm &varform,
 			const Eigen::MatrixXd &sol,
-			const Eigen::MatrixXd *disp_grad,
 			const Eigen::MatrixXd *pressure);
 
 		const Eigen::MatrixXd &adjoint_mat() const { return adjoint_mat_; }
@@ -99,7 +98,7 @@ namespace polyfem
 				step += collision_set_.size();
 			return collision_set_[step];
 		}
-		const ipc::SmoothCollisions &smooth_collision_set(int step) const
+		const ipc::GCPCollisions &smooth_collision_set(int step) const
 		{
 			assert(step < size());
 			if (step < 0)
@@ -146,7 +145,7 @@ namespace polyfem
 		// std::vector<StiffnessMatrix> gradu_h_prev_; // gradient of force at time T wrt. u at time (T-1) in transient simulations
 
 		std::vector<ipc::NormalCollisions> collision_set_;
-		std::vector<ipc::SmoothCollisions> smooth_collision_set_;
+		std::vector<ipc::GCPCollisions> smooth_collision_set_;
 		std::vector<ipc::TangentialCollisions> friction_collision_set_;
 
 		std::vector<ipc::NormalCollisions> normal_adhesion_collision_set_;
@@ -160,7 +159,7 @@ namespace polyfem
 			const Eigen::MatrixXd &u,
 			const StiffnessMatrix &gradu_h,
 			const ipc::NormalCollisions &collision_set,
-			const ipc::SmoothCollisions &smooth_collision_set,
+			const ipc::GCPCollisions &smooth_collision_set,
 			const ipc::TangentialCollisions &friction_constraint_set,
 			const ipc::NormalCollisions &normal_adhesion_set,
 			const ipc::TangentialCollisions &tangential_adhesion_set,
@@ -175,7 +174,7 @@ namespace polyfem
 			const StiffnessMatrix &gradu_h,
 			// const StiffnessMatrix &gradu_h_prev,
 			const ipc::NormalCollisions &collision_set,
-			const ipc::SmoothCollisions &smooth_collision_set,
+			const ipc::GCPCollisions &smooth_collision_set,
 			const ipc::TangentialCollisions &friction_collision_set);
 
 		void cache_quantities_quasistatic(
@@ -183,7 +182,7 @@ namespace polyfem
 			const Eigen::MatrixXd &u,
 			const StiffnessMatrix &gradu_h,
 			const ipc::NormalCollisions &collision_set,
-			const ipc::SmoothCollisions &smooth_collision_set,
+			const ipc::GCPCollisions &smooth_collision_set,
 			const ipc::NormalCollisions &normal_adhesion_set,
 			const Eigen::MatrixXd &disp_grad);
 	};

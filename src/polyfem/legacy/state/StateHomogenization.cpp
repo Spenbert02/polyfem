@@ -41,10 +41,12 @@ namespace polyfem::legacy
 	{
 		const int dim = mesh->dimension();
 		const int ndof = n_bases * dim;
+		const polyfem::io::FileSystemIO resources(root_path());
 
 		const std::vector<std::shared_ptr<Form>> forms = solve_data.init_forms(
 			// General
 			units,
+			resources,
 			mesh->dimension(), t, in_node_to_node,
 			// Elastic form
 			n_bases, bases, geom_bases(), *assembler, ass_vals_cache, mass_ass_vals_cache,
@@ -64,14 +66,18 @@ namespace polyfem::legacy
 			args["solver"]["advanced"]["lagged_regularization_weight"],
 			args["solver"]["advanced"]["lagged_regularization_iterations"],
 			// Augmented lagrangian form
-			obstacle.ndof(), args["constraints"]["hard"], args["constraints"]["soft"],
+			obstacle.ndof(), args["constraints"]["hard"], args["constraints"]["soft"], args["constraints"]["zero_mean"],
 			// Contact form
 			args["contact"]["enabled"], args["contact"]["periodic"].get<bool>() ? periodic_collision_mesh : collision_mesh, args["contact"]["dhat"],
 			avg_mass, args["contact"]["use_convergent_formulation"] ? bool(args["contact"]["use_area_weighting"]) : false,
 			args["contact"]["use_convergent_formulation"] ? bool(args["contact"]["use_improved_max_operator"]) : false,
 			args["contact"]["use_convergent_formulation"] ? bool(args["contact"]["use_physical_barrier"]) : false,
+			args["contact"]["collision_set_type"].get<std::string>(),
+			args["contact"]["skip_obstacles"].get<bool>(),
+			args["contact"]["barrier"].get<std::string>(),
 			args["solver"]["contact"]["barrier_stiffness"],
 			args["solver"]["contact"]["initial_barrier_stiffness"],
+			args["solver"]["contact"]["dhat_epsilon_scale"],
 			args["solver"]["contact"]["CCD"]["broad_phase"],
 			args["solver"]["contact"]["CCD"]["tolerance"],
 			args["solver"]["contact"]["CCD"]["max_iterations"],
@@ -82,6 +88,9 @@ namespace polyfem::legacy
 			args["contact"]["alpha_n"],
 			args["contact"]["use_adaptive_dhat"],
 			args["contact"]["min_distance_ratio"],
+			// ESP contact form
+			args["contact"]["use_esp_formulation"],
+			args["contact"]["esp_params"],
 			// Normal Adhesion Form
 			is_adhesion_enabled(),
 			args["contact"]["adhesion"]["dhat_p"],
@@ -94,13 +103,18 @@ namespace polyfem::legacy
 			// Homogenization
 			macro_strain_constraint,
 			// Periodic contact
-			args["contact"]["periodic"], periodic_collision_mesh_to_basis, periodic_bc,
+			args["contact"]["periodic"], periodic_collision_mesh_to_basis,
 			// Friction form
 			args["contact"]["friction_coefficient"],
 			args["contact"]["epsv"],
 			args["solver"]["contact"]["friction_iterations"],
 			// Rayleigh damping form
-			args["solver"]["rayleigh_damping"]);
+			args["solver"]["rayleigh_damping"],
+			// BC AL lumping
+			args["solver"]["augmented_lagrangian"]["lumping"],
+			// Boundary-ID periodic constraints
+			mesh.get(), &total_local_boundary,
+			args["boundary_conditions"]["periodic"], /*fe_space_id=*/-1);
 
 		for (const auto &[name, form] : solve_data.named_forms())
 		{
@@ -133,7 +147,9 @@ namespace polyfem::legacy
 		std::shared_ptr<solver::NLHomoProblem> homo_problem = std::make_shared<solver::NLHomoProblem>(
 			ndof,
 			macro_strain_constraint,
-			*this, t, forms, solve_data.al_form, solve_symmetric_flag, polysolve::linear::Solver::create(args["solver"]["linear"], logger()), characteristic_length, characteristic_force_density, pure_mass, mesh->dimension());
+			n_bases, mesh_nodes, t, forms, solve_data.al_form, solve_symmetric_flag,
+			polysolve::linear::Solver::create(args["solver"]["linear"], logger()),
+			characteristic_length, characteristic_force_density, pure_mass, mesh->dimension());
 		if (solve_data.periodic_contact_form)
 			homo_problem->add_form(solve_data.periodic_contact_form);
 		if (solve_data.strain_al_lagr_form)
@@ -284,15 +300,6 @@ namespace polyfem::legacy
 		}
 
 		sol = homo_problem->reduced_to_extended(reduced_sol);
-		if (args["/boundary_conditions/periodic_boundary/force_zero_mean"_json_pointer].get<bool>())
-		{
-			Eigen::VectorXd integral = polyfem::io::Evaluator::integrate_function(bases, geom_bases(), sol, dim, dim);
-			double area = polyfem::io::Evaluator::integrate_function(bases, geom_bases(), Eigen::VectorXd::Ones(n_bases), dim, 1)(0);
-			for (int d = 0; d < dim; d++)
-				sol(Eigen::seqN(d, n_bases, dim), 0).array() -= integral(d) / area;
-
-			reduced_sol = homo_problem->extended_to_reduced(sol);
-		}
 
 		if (user_post_step)
 		{

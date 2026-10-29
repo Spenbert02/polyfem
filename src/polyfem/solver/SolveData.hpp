@@ -6,7 +6,9 @@
 #include <polyfem/basis/ElementBases.hpp>
 #include <polyfem/mesh/Obstacle.hpp>
 #include <polyfem/mesh/LocalBoundary.hpp>
+#include <polyfem/io/ResourceIO.hpp>
 #include <polyfem/utils/JSONUtils.hpp>
+#include <polyfem/solver/forms/lagrangian/BCLagrangianForm.hpp>
 
 #include <ipc/collision_mesh.hpp>
 #include <polyfem/solver/forms/ContactForm.hpp>
@@ -23,11 +25,6 @@ namespace polyfem::time_integrator
 {
 	class ImplicitTimeIntegrator;
 } // namespace polyfem::time_integrator
-
-namespace polyfem::utils
-{
-	class PeriodicBoundary;
-}
 
 namespace polyfem::assembler
 {
@@ -63,6 +60,7 @@ namespace polyfem::solver
 		std::vector<std::shared_ptr<Form>> init_forms(
 			// General
 			const Units &units,
+			const io::ResourceIO &resources,
 			const int dim,
 			const double t,
 			const Eigen::VectorXi &in_node_to_node,
@@ -109,6 +107,7 @@ namespace polyfem::solver
 			const size_t obstacle_ndof,
 			const std::vector<std::string> &hard_constraint_files,
 			const std::vector<json> &soft_constraint_files,
+			const json &zero_mean,
 
 			// Contact form
 			const bool contact_enabled,
@@ -118,8 +117,12 @@ namespace polyfem::solver
 			const bool use_area_weighting,
 			const bool use_improved_max_operator,
 			const bool use_physical_barrier,
+			const std::string &collision_set_type,
+			const bool skip_obstacles,
+			const std::string &barrier,
 			const json &barrier_stiffness,
 			const double initial_barrier_stiffness,
+			const double dhat_epsilon_scale,
 			const ipc::BroadPhaseMethod broad_phase,
 			const double ccd_tolerance,
 			const long ccd_max_iterations,
@@ -131,6 +134,10 @@ namespace polyfem::solver
 			const double alpha_n,
 			const bool use_adaptive_dhat,
 			const double min_distance_ratio,
+
+			// ESP contact form
+			const bool use_esp_formulation,
+			json esp_params,
 
 			// Normal Adhesion Form
 			const bool adhesion_enabled,
@@ -149,7 +156,6 @@ namespace polyfem::solver
 			// Periodic contact
 			const bool periodic_contact,
 			const Eigen::VectorXi &tiled_to_single,
-			const std::shared_ptr<utils::PeriodicBoundary> &periodic_bc,
 
 			// Friction form
 			const double friction_coefficient,
@@ -157,7 +163,16 @@ namespace polyfem::solver
 			const int friction_iterations,
 
 			// Rayleigh damping form
-			const json &rayleigh_damping);
+			const json &rayleigh_damping,
+
+			// BC augmented-Lagrangian mass-metric lumping
+			const BCLumpingMode al_lumping = BCLumpingMode::ROW_SUM,
+
+			// Boundary-ID periodic constraints
+			const mesh::Mesh *periodic_mesh = nullptr,
+			const std::vector<mesh::LocalBoundary> *periodic_local_boundary = nullptr,
+			const json &periodic_conditions = json::array(),
+			const int fe_space_id = -1);
 
 		/// @brief update the barrier stiffness for the forms
 		/// @param x current solution

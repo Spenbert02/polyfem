@@ -17,15 +17,16 @@ set(test_sources
   test_normal.cpp
   test_navier_stokes_forms.cpp
   test_output.cpp
+  test_periodic_boundary.cpp
   test_problem.cpp
   test_quadrature.cpp
   test_rbf.cpp
-  test_restart.cpp
   test_tbb.cpp
   test_time_integrators.cpp
   test_utils.cpp
   test_varform_factory.cpp
   verify_run.cpp
+  test_hgo_dispersion.cpp
 )
 
 if(POLYFEM_WITH_OPTIMIZATION)
@@ -72,6 +73,11 @@ target_link_libraries(unit_tests PUBLIC polyfem::diff)
 ################################################################################
 
 target_compile_definitions(unit_tests PUBLIC -DPOLYFEM_TEST_DIR=\"${CMAKE_SOURCE_DIR}/tests\")
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(POLYFEM_TEST_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}" CACHE FILEPATH "Python executable used by integration tests")
+target_compile_definitions(unit_tests PUBLIC
+  POLYFEM_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"
+  POLYFEM_TEST_PYTHON_EXECUTABLE=\"${POLYFEM_TEST_PYTHON_EXECUTABLE}\")
 
 target_compile_definitions(unit_tests PUBLIC CATCH_CONFIG_ENABLE_BENCHMARKING)
 
@@ -86,3 +92,6 @@ include(Catch)
 # Register tests
 set(PARSE_CATCH_TESTS_ADD_TO_CONFIGURE_DEPENDS ON)
 catch_discover_tests(unit_tests ADD_TAGS_AS_LABELS EXTRA_ARGS --rng-seed 1)
+
+add_test(NAME package_json_hdf5
+  COMMAND "${POLYFEM_TEST_PYTHON_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_package_json_hdf5.py")

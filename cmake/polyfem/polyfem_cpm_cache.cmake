@@ -13,8 +13,10 @@
 if(DEFINED ENV{CPM_SOURCE_CACHE})
     set(CPM_SOURCE_CACHE_DEFAULT $ENV{CPM_SOURCE_CACHE})
 else()
-    # Set CPM cache folder if unset
-    file(REAL_PATH "~/.cache/CPM" CPM_SOURCE_CACHE_DEFAULT EXPAND_TILDE)
+    # Set CPM cache folder if unset: inside the build folder, as wildmeshing-toolkit
+    # does, so no build depends on a shared cache (~/.cache/CPM was a symlink to an
+    # external drive)
+    file(REAL_PATH "${CMAKE_BINARY_DIR}/CPM" CPM_SOURCE_CACHE_DEFAULT EXPAND_TILDE)
 endif()
 
 set(CPM_SOURCE_CACHE

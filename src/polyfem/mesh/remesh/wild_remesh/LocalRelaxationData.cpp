@@ -18,7 +18,7 @@ namespace polyfem::mesh
 		LocalMesh<M> &local_mesh,
 		const double current_time,
 		const bool contact_enabled)
-		: local_mesh(local_mesh)
+		: resources_(state.root_path()), local_mesh(local_mesh)
 	{
 		problem = std::make_shared<assembler::GenericTensorProblem>("GenericTensor");
 
@@ -35,7 +35,7 @@ namespace polyfem::mesh
 	{
 		POLYFEM_REMESHER_SCOPED_TIMER("LocalRelaxationData::init_mesh");
 
-		mesh = Mesh::create(local_mesh.rest_positions(), local_mesh.elements());
+		mesh = Mesh::create(MeshData(local_mesh.rest_positions(), local_mesh.elements()));
 		assert(mesh->n_vertices() == local_mesh.num_vertices());
 
 		std::vector<int> boundary_ids(mesh->n_boundary_elements(), -1);
@@ -153,11 +153,11 @@ namespace polyfem::mesh
 		assembler = assembler::AssemblerUtils::make_assembler(state.formulation());
 		assert(assembler->name() == state.formulation());
 		assembler->set_size(dim());
-		assembler->set_materials(local_mesh.body_ids(), state.args["materials"], state.units, state.root_path());
+		assembler->set_materials(local_mesh.body_ids(), state.args["materials"], state.units, resources_);
 
 		mass_matrix_assembler = std::make_shared<assembler::Mass>();
 		mass_matrix_assembler->set_size(dim());
-		mass_matrix_assembler->set_materials(local_mesh.body_ids(), state.args["materials"], state.units, state.root_path());
+		mass_matrix_assembler->set_materials(local_mesh.body_ids(), state.args["materials"], state.units, resources_);
 
 		pressure_assembler = nullptr; // TODO: implement this
 	}
@@ -239,10 +239,10 @@ namespace polyfem::mesh
 
 			const int size = state.problem->is_scalar() ? 1 : dim();
 			solve_data.rhs_assembler = std::make_shared<assembler::RhsAssembler>(
-				*assembler, *mesh, nullptr, dirichlet_nodes, neumann_nodes,
+				*assembler, *mesh, /*obstacle=*/nullptr, dirichlet_nodes, neumann_nodes,
 				dirichlet_nodes_position, neumann_nodes_position, n_bases(),
 				dim(), bases, /*geom_bases=*/bases, mass_assembly_vals_cache,
-				*state.problem, state.args["space"]["advanced"]["bc_method"],
+				*state.problem, resources_, state.args["space"]["advanced"]["bc_method"],
 				rhs_solver_params);
 
 			solve_data.rhs_assembler->assemble(mass_matrix_assembler->density(), rhs);
@@ -254,7 +254,7 @@ namespace polyfem::mesh
 			POLYFEM_REMESHER_SCOPED_TIMER("LocalRelaxationData::init_solve_data -> init forms");
 			forms = solve_data.init_forms(
 				// General
-				state.units, dim(), current_time, state.in_node_to_node,
+				state.units, resources_, dim(), current_time, state.in_node_to_node,
 				// Elastic form
 				n_bases(), bases, /*geom_bases=*/bases, *assembler,
 				assembly_vals_cache, assembly_vals_cache, state.args["solver"]["advanced"]["jacobian_threshold"], state.args["solver"]["advanced"]["check_inversion"],
@@ -277,13 +277,18 @@ namespace polyfem::mesh
 				/*obstacle_ndof=*/0,
 				/*hard_constraint_files=*/std::vector<std::string>(),
 				/*soft_constraint_files=*/std::vector<json>(),
+				/*zero_mean=*/false,
 				// Contact form
 				contact_enabled, collision_mesh, state.args["contact"]["dhat"],
 				state.avg_mass, state.args["contact"]["use_convergent_formulation"] ? bool(state.args["contact"]["use_area_weighting"]) : false,
 				state.args["contact"]["use_convergent_formulation"] ? bool(state.args["contact"]["use_improved_max_operator"]) : false,
 				state.args["contact"]["use_convergent_formulation"] ? bool(state.args["contact"]["use_physical_barrier"]) : false,
+				state.args["contact"]["collision_set_type"].get<std::string>(),
+				state.args["contact"]["skip_obstacles"].get<bool>(),
+				state.args["contact"]["barrier"].get<std::string>(),
 				contact_enabled ? state.solve_data.contact_form->barrier_stiffness() : 0,
 				state.args["solver"]["contact"]["initial_barrier_stiffness"],
+				state.args["solver"]["contact"]["dhat_epsilon_scale"],
 				state.args["solver"]["contact"]["CCD"]["broad_phase"],
 				state.args["solver"]["contact"]["CCD"]["tolerance"],
 				state.args["solver"]["contact"]["CCD"]["max_iterations"],
@@ -294,6 +299,9 @@ namespace polyfem::mesh
 				state.args["contact"]["alpha_n"],
 				state.args["contact"]["use_adaptive_dhat"],
 				state.args["contact"]["min_distance_ratio"],
+				// ESP contact form
+				state.args["contact"]["use_esp_formulation"],
+				state.args["contact"]["esp_params"],
 				// Normal Adhesion Form
 				state.is_adhesion_enabled(),
 				state.args["contact"]["adhesion"]["dhat_p"],
@@ -306,7 +314,7 @@ namespace polyfem::mesh
 				// Homogenization
 				assembler::MacroStrainValue(),
 				// Periodic contact
-				/*periodic_contact=*/false, /*tiled_to_single=*/Eigen::VectorXi(), /*periodicbc=*/nullptr,
+				/*periodic_contact=*/false, /*tiled_to_single=*/Eigen::VectorXi(),
 				// Friction form
 				state.args["contact"]["friction_coefficient"],
 				state.args["contact"]["epsv"],

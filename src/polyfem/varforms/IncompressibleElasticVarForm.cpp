@@ -21,6 +21,30 @@ namespace polyfem::varform
 {
 	using namespace varform::internal;
 
+	void IncompressibleElasticVarForm::serialize_checkpoint(
+		io::CheckpointWriter &writer,
+		const Eigen::MatrixXd &solution,
+		const io::CheckpointMetadata &metadata) const
+	{
+		VarForm::serialize_checkpoint(writer, solution, metadata);
+		write_checkpoint_ordering(writer, "primary", space_);
+		write_checkpoint_ordering(writer, "pressure", pressure_space_);
+	}
+
+	void IncompressibleElasticVarForm::deserialize_checkpoint(
+		const io::CheckpointReader &reader,
+		Eigen::MatrixXd &solution)
+	{
+		VarForm::deserialize_checkpoint(reader, solution);
+		validate_checkpoint_solution(solution, stacked_ndof());
+		reorder_checkpoint_block(
+			reader, "primary", space_,
+			mesh_->dimension(), 0, solution);
+		reorder_checkpoint_block(
+			reader, "pressure", pressure_space_,
+			1, primary_ndof(), solution);
+	}
+
 	void IncompressibleElasticVarForm::reset()
 	{
 		ElasticVarForm::reset();
@@ -152,7 +176,7 @@ namespace polyfem::varform
 			*primary_assembler_, *mesh_, nullptr,
 			boundary_.dirichlet_nodes, boundary_.neumann_nodes,
 			boundary_.dirichlet_nodes_position, boundary_.neumann_nodes_position,
-			space_.n_bases, mesh_->dimension(), space_.basis_list(), space_.geometry_basis_list(), mass_ass_vals_cache_, *problem,
+			space_.n_bases, mesh_->dimension(), space_.basis_list(), space_.geometry_basis_list(), mass_ass_vals_cache_, *problem, resources_,
 			args["space"]["advanced"]["bc_method"],
 			rhs_solver_params,
 			displacement_space_id_);
@@ -172,14 +196,15 @@ namespace polyfem::varform
 		const bool use_corner_quadrature = args["space"]["advanced"]["use_corner_quadrature"];
 		const int quadrature_order = args["space"]["advanced"]["quadrature_order"].get<int>();
 		const int mass_quadrature_order = args["space"]["advanced"]["mass_quadrature_order"].get<int>();
-		Eigen::VectorXi pressure_disc_orders;
-		assign_discr_orders(args["space"]["discr_order"], pressure_space_id_, mesh, pressure_disc_orders);
+		Eigen::VectorXi pressure_disc_orders, pressure_disc_ordersq;
+		assign_discr_orders(args["space"], pressure_space_id_, mesh, pressure_disc_orders, pressure_disc_ordersq);
 		// to avoid serendipity
 		const std::string pressure_basis_type = args["space"]["basis_type"].get<std::string>() == "Bernstein" ? "Bernstein" : "Lagrange";
 		build_fe_space(
 			mesh,
 			/*iso_parametric=*/true,
 			pressure_disc_orders,
+			pressure_disc_ordersq,
 			pressure_basis_type,
 			args["space"]["poly_basis_type"],
 			*primary_assembler_,
@@ -281,7 +306,7 @@ namespace polyfem::varform
 	void IncompressibleElasticVarForm::prepare_initial_solution(Eigen::MatrixXd &sol) const
 	{
 		if (sol.size() <= 0)
-			initial_elastic_solution(sol);
+			initial_solution(sol);
 		if (sol.cols() > 1)
 			sol.conservativeResize(Eigen::NoChange, 1);
 		sol.conservativeResize(stacked_ndof(), sol.cols());
@@ -377,6 +402,9 @@ namespace polyfem::varform
 			Eigen::MatrixXd::Zero(displacement.rows(), displacement.cols()),
 			dt);
 		time_integrator = bdf;
+		restore_checkpoint_integrator(
+			time_integrator, "/checkpoint/state/primary_integrator", dt,
+			"primary", space_, mesh_->dimension());
 
 		save_timestep(t0, 0, t0, dt, sol);
 
@@ -415,14 +443,20 @@ namespace polyfem::varform
 			bdf->update_quantities(displacement.col(0));
 
 			save_timestep(time, t, t0, dt, sol);
-			save_elastic_step_state(t0, dt, t, time_integrator.get());
+			save_elastic_step_state(t0, dt, t, sol, time_integrator.get());
 			logger().info("{}/{}  t={}", t, time_steps, time);
 			notify_time_step(t, time_steps, t0, dt);
 		}
 	}
 
-	void IncompressibleElasticVarForm::solve_problem(Eigen::MatrixXd &sol)
+	void IncompressibleElasticVarForm::solve_problem(
+		Eigen::MatrixXd &sol,
+		const InitialConditionOverride *initial_condition_override,
+		const ForwardStepCallback &post_step)
 	{
+		assert(!initial_condition_override && "Incompressible elasticity does not support initial-condition overrides");
+		assert(!post_step && "Incompressible elasticity does not support post-step callbacks");
+
 		stats.spectrum.setZero();
 		igl::Timer timer;
 		timer.start();

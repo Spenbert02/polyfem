@@ -258,9 +258,11 @@ namespace polyfem::legacy
 		set_materials(*damping_prev_assembler);
 
 		const ElementInversionCheck check_inversion = args["solver"]["advanced"]["check_inversion"];
+		const polyfem::io::FileSystemIO resources(root_path());
 		const std::vector<std::shared_ptr<Form>> forms = solve_data.init_forms(
 			// General
 			units,
+			resources,
 			mesh->dimension(), t, in_node_to_node,
 			// Elastic form
 			n_bases, bases, geom_bases(), *assembler, ass_vals_cache, mass_ass_vals_cache, args["solver"]["advanced"]["jacobian_threshold"], check_inversion,
@@ -280,14 +282,18 @@ namespace polyfem::legacy
 			args["solver"]["advanced"]["lagged_regularization_weight"],
 			args["solver"]["advanced"]["lagged_regularization_iterations"],
 			// Augmented lagrangian form
-			obstacle.ndof(), args["constraints"]["hard"], args["constraints"]["soft"],
+			obstacle.ndof(), args["constraints"]["hard"], args["constraints"]["soft"], args["constraints"]["zero_mean"],
 			// Contact form
 			args["contact"]["enabled"], args["contact"]["periodic"].get<bool>() ? periodic_collision_mesh : collision_mesh, args["contact"]["dhat"],
 			avg_mass, args["contact"]["use_convergent_formulation"] ? bool(args["contact"]["use_area_weighting"]) : false,
 			args["contact"]["use_convergent_formulation"] ? bool(args["contact"]["use_improved_max_operator"]) : false,
 			args["contact"]["use_convergent_formulation"] ? bool(args["contact"]["use_physical_barrier"]) : false,
+			args["contact"]["collision_set_type"].get<std::string>(),
+			args["contact"]["skip_obstacles"].get<bool>(),
+			args["contact"]["barrier"].get<std::string>(),
 			args["solver"]["contact"]["barrier_stiffness"],
 			args["solver"]["contact"]["initial_barrier_stiffness"],
+			args["solver"]["contact"]["dhat_epsilon_scale"],
 			args["solver"]["contact"]["CCD"]["broad_phase"],
 			args["solver"]["contact"]["CCD"]["tolerance"],
 			args["solver"]["contact"]["CCD"]["max_iterations"],
@@ -298,6 +304,9 @@ namespace polyfem::legacy
 			args["contact"]["alpha_n"],
 			args["contact"]["use_adaptive_dhat"],
 			args["contact"]["min_distance_ratio"],
+			// ESP contact form
+			args["contact"]["use_esp_formulation"],
+			args["contact"]["esp_params"],
 			// Normal Adhesion Form
 			is_adhesion_enabled(),
 			args["contact"]["adhesion"]["dhat_p"],
@@ -310,13 +319,20 @@ namespace polyfem::legacy
 			// Homogenization
 			macro_strain_constraint,
 			// Periodic contact
-			args["contact"]["periodic"], periodic_collision_mesh_to_basis, periodic_bc,
+			args["contact"]["periodic"], periodic_collision_mesh_to_basis,
 			// Friction form
 			args["contact"]["friction_coefficient"],
 			args["contact"]["epsv"],
 			args["solver"]["contact"]["friction_iterations"],
 			// Rayleigh damping form
-			args["solver"]["rayleigh_damping"]);
+			args["solver"]["rayleigh_damping"],
+
+			// BC AL lumping
+			args["solver"]["augmented_lagrangian"]["lumping"],
+
+			// Boundary-ID periodic constraints
+			mesh.get(), &total_local_boundary,
+			args["boundary_conditions"]["periodic"], /*fe_space_id=*/-1);
 
 		for (const auto &form : forms)
 			form->set_output_dir(output_dir);
@@ -339,7 +355,7 @@ namespace polyfem::legacy
 
 		const int ndof = n_bases * mesh->dimension();
 		solve_data.nl_problem = std::make_shared<NLProblem>(
-			ndof, periodic_bc, t, forms, solve_data.al_form,
+			ndof, t, forms, solve_data.al_form,
 			polysolve::linear::Solver::create(args["solver"]["linear"], logger()), characteristic_length, characteristic_force_density, pure_mass, mesh->dimension());
 		solve_data.nl_problem->init(sol);
 		solve_data.nl_problem->update_quantities(t, sol);

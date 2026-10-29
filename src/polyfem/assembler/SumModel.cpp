@@ -1,4 +1,5 @@
 #include "SumModel.hpp"
+#include "MatParams.hpp"
 
 #include <jse/jse.h>
 
@@ -9,7 +10,7 @@
 
 namespace polyfem::assembler
 {
-	void SumModel::add_multimaterial(const int index, const json &params, const Units &units, const std::string &root_path)
+	void SumModel::add_multimaterial(const int index, const json &params, const Units &units, const io::ResourceIO &resources)
 	{
 		assert(size() == 2 || size() == 3);
 		if (params.count("models") == 0)
@@ -18,8 +19,12 @@ namespace polyfem::assembler
 		auto models = params["models"];
 		element_types_[index] = std::vector<std::string>();
 
-		for (const auto &model : models)
+		for (const auto &model_params : models)
 		{
+			json model = model_params;
+			if (params.contains(MATERIAL_ELEMENT_INDEX))
+				model[MATERIAL_ELEMENT_INDEX] = params[MATERIAL_ELEMENT_INDEX];
+
 			const std::string model_name = model["type"];
 			if (assemblers_by_type_.find(model_name) == assemblers_by_type_.end())
 			{
@@ -28,7 +33,7 @@ namespace polyfem::assembler
 				assert(assemblers_by_type_[model_name] != nullptr);
 				assemblers_by_type_[model_name]->set_size(size());
 			}
-			assemblers_by_type_[model_name]->add_multimaterial(index, model, units, root_path);
+			assemblers_by_type_[model_name]->add_multimaterial(index, model, units, resources);
 			element_types_[index].push_back(model_name);
 		}
 	}

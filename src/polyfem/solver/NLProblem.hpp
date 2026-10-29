@@ -1,7 +1,6 @@
 #pragma once
 
 #include <polyfem/solver/FullNLProblem.hpp>
-#include <polyfem/assembler/PeriodicBoundary.hpp>
 #include <polyfem/solver/forms/lagrangian/AugmentedLagrangianForm.hpp>
 
 #include <polyfem/utils/Logger.hpp>
@@ -30,7 +29,6 @@ namespace polyfem::solver
 
 	public:
 		NLProblem(const int full_size,
-				  const std::shared_ptr<utils::PeriodicBoundary> &periodic_bc,
 				  const double t,
 				  const std::vector<std::shared_ptr<Form>> &forms,
 				  const std::vector<std::shared_ptr<AugmentedLagrangianForm>> &penalty_forms,
@@ -70,7 +68,7 @@ namespace polyfem::solver
 		TVector full_to_reduced(const TVector &full) const;
 		virtual TVector full_to_reduced_grad(const TVector &full) const;
 		virtual TVector full_to_reduced_diag(const TVector &full_diag) const;
-		TVector reduced_to_full(const TVector &reduced) const;
+		virtual TVector reduced_to_full(const TVector &reduced) const;
 
 		void full_hessian_to_reduced_hessian(StiffnessMatrix &hessian) const;
 

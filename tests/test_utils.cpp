@@ -7,7 +7,10 @@
 #include <polyfem/io/MshReader.hpp>
 #include <polyfem/mesh/LocalBoundary.hpp>
 #include <polyfem/mesh/Mesh.hpp>
+#include <polyfem/mesh/MeshLoader.hpp>
+#include <polyfem/io/ResourceIO.hpp>
 #include <polyfem/utils/MatrixUtils.hpp>
+#include <polyfem/utils/JSONUtils.hpp>
 
 #ifdef POLYFEM_WITH_ITR
 #include <wmtk/TriMesh.h>
@@ -38,7 +41,7 @@ namespace
 		Eigen::MatrixXi cells(1, 3);
 		cells << 0, 1, 2;
 
-		return Mesh::create(vertices, cells);
+		return Mesh::create(MeshData(vertices, cells));
 	}
 
 	std::unique_ptr<Mesh> create_test_quad_mesh()
@@ -52,7 +55,7 @@ namespace
 		Eigen::MatrixXi cells(1, 4);
 		cells << 0, 1, 2, 3;
 
-		return Mesh::create(vertices, cells);
+		return Mesh::create(MeshData(vertices, cells));
 	}
 
 	std::unique_ptr<Mesh> create_test_tetra_mesh()
@@ -66,7 +69,7 @@ namespace
 		Eigen::MatrixXi cells(1, 4);
 		cells << 0, 1, 2, 3;
 
-		return Mesh::create(vertices, cells);
+		return Mesh::create(MeshData(vertices, cells));
 	}
 
 	std::unique_ptr<Mesh> create_test_hex_mesh()
@@ -84,7 +87,7 @@ namespace
 		Eigen::MatrixXi cells(1, 8);
 		cells << 0, 1, 2, 3, 4, 5, 6, 7;
 
-		return Mesh::create(vertices, cells);
+		return Mesh::create(MeshData(vertices, cells));
 	}
 
 	void require_sparse_equal(const StiffnessMatrix &actual, const Eigen::MatrixXd &expected)
@@ -163,16 +166,17 @@ TEST_CASE("bessel", "[utils]")
 
 TEST_CASE("expression", "[utils]")
 {
+	const io::FileSystemIO resources(".");
 	json jexpr = {{"value", "x^2+sqrt(x*y)+sin(z)*x"}};
 	json jexpr2d = {{"value", "x^2+sqrt(x*y)"}};
 	json jval = {{"value", 1}};
 
 	utils::ExpressionValue expr;
-	expr.init(jexpr["value"], "");
+	expr.init(jexpr["value"], resources);
 	utils::ExpressionValue expr2d;
-	expr2d.init(jexpr2d["value"], "");
+	expr2d.init(jexpr2d["value"], resources);
 	utils::ExpressionValue val;
-	val.init(jval["value"], "");
+	val.init(jval["value"], resources);
 
 	expr.set_unit_type("");
 	expr2d.set_unit_type("");
@@ -183,7 +187,7 @@ TEST_CASE("expression", "[utils]")
 	REQUIRE(val(2, 3, 4) == Catch::Approx(1).margin(1e-16));
 
 	utils::ExpressionValue time_expr;
-	time_expr.init(json::array({"x", "2*x"}), "");
+	time_expr.init(json::array({"x", "2*x"}), resources);
 	time_expr.set_t(json::array({0, 1}));
 	time_expr.set_unit_type("");
 
@@ -201,7 +205,7 @@ TEST_CASE("expression", "[utils]")
 	}
 
 	utils::ExpressionValue python_expr;
-	python_expr.init({{"file_name", python_file.string()}, {"function_name", "value"}}, "");
+	python_expr.init({{"file_name", python_file.string()}, {"function_name", "value"}}, resources);
 	python_expr.set_unit_type("");
 
 	REQUIRE_FALSE(python_expr.is_zero());
@@ -213,10 +217,10 @@ TEST_CASE("expression", "[utils]")
 
 TEST_CASE("mshreader", "[utils]")
 {
-	const std::string path = POLYFEM_DATA_DIR;
+	const io::FileSystemIO resources(POLYFEM_DATA_DIR);
 	Eigen::MatrixXd vertices;
 	Eigen::MatrixXi cells;
-	const auto mesh = Mesh::create(path + "/circle2.msh");
+	const auto mesh = MeshLoader(resources).load_fem("circle2.msh");
 	REQUIRE(mesh);
 }
 
@@ -591,3 +595,78 @@ TEST_CASE("wmtk_instantiation", "[utils]")
 	wmtk::TriMesh mesh;
 }
 #endif
+
+TEST_CASE("expand_bc_sidecars", "[utils]")
+{
+	using namespace polyfem::utils;
+
+	const std::filesystem::path sidecar_path =
+		std::filesystem::temp_directory_path() / "polyfem_dirichlet_sidecar.json";
+	{
+		std::ofstream file(sidecar_path);
+		REQUIRE(file.is_open());
+		file << R"([{"id": 1, "value": [1, 2, 3]}, {"id": 2, "value": [4, 5, 6]}])";
+	}
+
+	// A minimal stand-in for json-specs/dirichlet-boundary-condition.json.
+	// Kept local so the test does not depend on the generated spec header.
+	const json rules = json::parse(R"([
+		{"pointer": "/", "type": "object", "required": ["id", "value"],
+		 "optional": ["fe_space", "time_reference", "interpolation", "dimension"]},
+		{"pointer": "/id", "type": "int"},
+		{"pointer": "/value", "type": "list"},
+		{"pointer": "/fe_space", "type": "int", "default": -1},
+		{"pointer": "/dimension", "type": "list", "default": [true, true, true]},
+		{"pointer": "/dimension/*", "type": "bool", "default": true},
+		{"pointer": "/time_reference", "type": "list", "default": []},
+		{"pointer": "/interpolation", "type": "list", "default": []}
+	])");
+
+	SECTION("json sidecar is expanded inline")
+	{
+		json args;
+		args["root_path"] = "";
+		args["boundary_conditions"]["dirichlet_boundary"] =
+			json::array({sidecar_path.string()});
+
+		expand_bc_sidecars(args, rules);
+
+		const json &bcs = args["boundary_conditions"]["dirichlet_boundary"];
+		REQUIRE(bcs.size() == 2);
+		CHECK(bcs[0]["id"] == 1);
+		CHECK(bcs[1]["id"] == 2);
+		CHECK(bcs[0]["fe_space"] == -1);
+		CHECK(bcs[0]["interpolation"].is_array());
+		CHECK(bcs[0]["dimension"].size() == 3);
+	}
+
+	SECTION("non-json strings are left untouched")
+	{
+		const std::string nodal_path = "some_nodal_file.txt";
+		json args;
+		args["root_path"] = "";
+		args["boundary_conditions"]["dirichlet_boundary"] = json::array({nodal_path});
+
+		expand_bc_sidecars(args, rules);
+
+		const json &bcs = args["boundary_conditions"]["dirichlet_boundary"];
+		REQUIRE(bcs.size() == 1);
+		CHECK(bcs[0] == nodal_path);
+	}
+
+	SECTION("inline objects are left untouched")
+	{
+		json args;
+		args["root_path"] = "";
+		args["boundary_conditions"]["dirichlet_boundary"] =
+			json::array({{{"id", 7}, {"value", json::array({0, 0, 0})}}});
+
+		expand_bc_sidecars(args, rules);
+
+		const json &bcs = args["boundary_conditions"]["dirichlet_boundary"];
+		REQUIRE(bcs.size() == 1);
+		CHECK(bcs[0]["id"] == 7);
+	}
+
+	std::filesystem::remove(sidecar_path);
+}
